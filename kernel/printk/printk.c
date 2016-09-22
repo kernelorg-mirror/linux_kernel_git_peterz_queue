@@ -60,6 +60,33 @@
 #include "braille.h"
 #include "internal.h"
 
+#ifdef CONFIG_EARLY_PRINTK
+struct console *early_console;
+
+static int early_vprintk(const char *fmt, va_list args)
+{
+	char buf[512];
+	int n;
+
+	n = vscnprintf(buf, sizeof(buf), fmt, args);
+	early_console->write(early_console, buf, n);
+
+	return n;
+}
+
+asmlinkage __visible void early_printk(const char *fmt, ...)
+{
+	va_list ap;
+
+	if (!early_console)
+		return;
+
+	va_start(ap, fmt);
+	early_vprintk(fmt, ap);
+	va_end(ap);
+}
+#endif
+
 int console_printk[4] = {
 	CONSOLE_LOGLEVEL_DEFAULT,	/* console_loglevel */
 	MESSAGE_LOGLEVEL_DEFAULT,	/* default_message_loglevel */
@@ -2349,26 +2376,6 @@ static bool pr_flush(int timeout_ms, bool reset_on_progress) { return true; }
 static bool __pr_flush(struct console *con, int timeout_ms, bool reset_on_progress) { return true; }
 
 #endif /* CONFIG_PRINTK */
-
-#ifdef CONFIG_EARLY_PRINTK
-struct console *early_console;
-
-asmlinkage __visible void early_printk(const char *fmt, ...)
-{
-	va_list ap;
-	char buf[512];
-	int n;
-
-	if (!early_console)
-		return;
-
-	va_start(ap, fmt);
-	n = vscnprintf(buf, sizeof(buf), fmt, ap);
-	va_end(ap);
-
-	early_console->write(early_console, buf, n);
-}
-#endif
 
 static void set_user_specified(struct console_cmdline *c, bool user_specified)
 {
