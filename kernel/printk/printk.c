@@ -63,6 +63,15 @@
 #ifdef CONFIG_EARLY_PRINTK
 struct console *early_console;
 
+static bool __read_mostly force_early_printk;
+
+static int __init force_early_printk_setup(char *str)
+{
+	force_early_printk = true;
+	return 0;
+}
+early_param("force_early_printk", force_early_printk_setup);
+
 static int early_vprintk(const char *fmt, va_list args)
 {
 	char buf[512];
@@ -2300,6 +2309,11 @@ asmlinkage int vprintk_emit(int facility, int level,
 	if (unlikely(suppress_panic_printk) &&
 	    atomic_read(&panic_cpu) != raw_smp_processor_id())
 		return 0;
+
+#ifdef CONFIG_EARLY_PRINTK
+	if (force_early_printk && early_console)
+		return early_vprintk(fmt, args);
+#endif
 
 	if (level == LOGLEVEL_SCHED) {
 		level = LOGLEVEL_DEFAULT;
