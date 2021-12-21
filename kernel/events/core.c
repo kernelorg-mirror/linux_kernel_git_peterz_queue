@@ -1797,6 +1797,8 @@ list_add_event(struct perf_event *event, struct perf_event_context *ctx)
 		ctx->nr_user++;
 	if (event->attr.inherit_stat)
 		ctx->nr_stat++;
+	if (event->attach_state & PERF_ATTACH_SELF)
+		ctx->nr_self++;
 
 	if (event->state > PERF_EVENT_STATE_OFF)
 		perf_cgroup_event_enable(event, ctx);
@@ -1996,6 +1998,8 @@ list_del_event(struct perf_event *event, struct perf_event_context *ctx)
 		ctx->nr_user--;
 	if (event->attr.inherit_stat)
 		ctx->nr_stat--;
+	if (event->attach_state & PERF_ATTACH_SELF)
+		ctx->nr_self--;
 
 	list_del_rcu(&event->event_entry);
 
@@ -3783,7 +3787,8 @@ static noinline int visit_groups_merge(struct perf_event_context *ctx,
  */
 static inline bool event_update_userpage(struct perf_event *event)
 {
-	if (likely(!atomic_read(&event->mmap_count)))
+	if (likely(!atomic_read(&event->mmap_count) ||
+		   !(event->attach_state & PERF_ATTACH_SELF)))
 		return false;
 
 	perf_event_update_time(event);
@@ -3830,7 +3835,8 @@ static int merge_sched_in(struct perf_event *event, void *data)
 			event->pmu_ctx->rotate_necessary = 1;
 			cpc = this_cpu_ptr(event->pmu_ctx->pmu->cpu_pmu_context);
 			perf_mux_hrtimer_restart(cpc);
-			group_update_userpage(event);
+			if (ctx->nr_self)
+				group_update_userpage(event);
 		}
 	}
 
@@ -6085,6 +6091,9 @@ void perf_event_update_userpage(struct perf_event *event)
 	rcu_read_lock();
 	rb = rcu_dereference(event->rb);
 	if (!rb)
+		goto unlock;
+
+	if (!(event->attach_state & PERF_ATTACH_SELF))
 		goto unlock;
 
 	/*
@@ -11926,6 +11935,8 @@ perf_event_alloc(struct perf_event_attr *attr, int cpu,
 		 * pmu before we get a ctx.
 		 */
 		event->hw.target = get_task_struct(task);
+		if (event->hw.target == current && !attr->inherit)
+			event->attach_state |= PERF_ATTACH_SELF;
 	}
 
 	event->clock = &local_clock;

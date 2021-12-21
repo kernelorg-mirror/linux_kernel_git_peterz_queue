@@ -2709,13 +2709,17 @@ void arch_perf_update_userpage(struct perf_event *event,
 	struct cyc2ns_data data;
 	u64 offset;
 
-	userpg->cap_user_time = 0;
-	userpg->cap_user_time_zero = 0;
-	userpg->cap_user_rdpmc =
-		!!(event->hw.flags & PERF_EVENT_FLAG_USER_READ_CNT);
+	userpg->cap_user_rdpmc = !!(event->hw.flags & PERF_EVENT_FLAG_USER_READ_CNT);
 	userpg->pmc_width = x86_pmu.cntval_bits;
 
-	if (!using_native_sched_clock() || !sched_clock_stable())
+	if (unlikely(!using_native_sched_clock() || !sched_clock_stable())) {
+		userpg->cap_user_time = 0;
+		userpg->cap_user_time_zero = 0;
+		return;
+	}
+
+	/* already set the time fields before */
+	if (likely(userpg->cap_user_time))
 		return;
 
 	cyc2ns_read_begin(&data);

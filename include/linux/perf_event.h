@@ -635,6 +635,7 @@ struct swevent_hlist {
 #define PERF_ATTACH_ITRACE	0x10
 #define PERF_ATTACH_SCHED_CB	0x20
 #define PERF_ATTACH_CHILD	0x40
+#define PERF_ATTACH_SELF	0x80
 
 struct bpf_prog;
 struct perf_cgroup;
@@ -928,6 +929,7 @@ struct perf_event_context {
 
 	int				nr_events;
 	int				nr_user;
+	int				nr_self;
 	int				is_active;
 
 	int				nr_task_data;
