@@ -54,7 +54,7 @@
  * 0xffff_ffff_0000_0000 and limit EFI VA mapping space to 64G.
  */
 static u64 efi_va = EFI_VA_START;
-static struct mm_struct *efi_prev_mm;
+static temp_mm_state_t efi_temp_mm_state;
 
 /*
  * We need our own copy of the higher levels of the page tables
@@ -476,15 +476,12 @@ void __init efi_dump_pagetable(void)
  */
 static void efi_enter_mm(void)
 {
-	efi_prev_mm = current->active_mm;
-	current->active_mm = &efi_mm;
-	switch_mm(efi_prev_mm, &efi_mm, NULL);
+	efi_temp_mm_state = use_temporary_mm(&efi_mm);
 }
 
 static void efi_leave_mm(void)
 {
-	current->active_mm = efi_prev_mm;
-	switch_mm(&efi_mm, efi_prev_mm, NULL);
+	unuse_temporary_mm(efi_temp_mm_state);
 }
 
 void arch_efi_call_virt_setup(void)
