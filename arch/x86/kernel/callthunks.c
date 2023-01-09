@@ -7,6 +7,7 @@
 #include <linux/memory.h>
 #include <linux/moduleloader.h>
 #include <linux/static_call.h>
+#include <linux/suspend.h>
 
 #include <asm/alternative.h>
 #include <asm/asm-offsets.h>
@@ -144,6 +145,10 @@ static bool skip_addr(void *dest)
 #ifdef CONFIG_XEN
 	if (dest >= (void *)hypercall_page &&
 	    dest < (void*)hypercall_page + PAGE_SIZE)
+		return true;
+#endif
+#ifdef CONFIG_PM_SLEEP
+	if (dest == restore_processor_state)
 		return true;
 #endif
 	return false;
