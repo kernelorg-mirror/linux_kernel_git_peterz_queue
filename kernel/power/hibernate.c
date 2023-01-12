@@ -281,6 +281,32 @@ __weak int arch_resume_nosmt(void)
 	return 0;
 }
 
+static noinstr int suspend_and_restore(void)
+{
+	int error;
+
+	/*
+	 * Strictly speaking swsusp_arch_suspend() should be noinstr too but it
+	 * is typically written in asm, as such, assume it is good and shut up
+	 * the validator.
+	 */
+	instrumentation_begin();
+	error = swsusp_arch_suspend();
+	instrumentation_end();
+
+	/*
+	 * Architecture resume code 'returns' from the swsusp_arch_suspend()
+	 * call and resumes execution here with some very dodgy machine state.
+	 *
+	 * Compiler instrumentation between these two calls (or in
+	 * restore_processor_state() for that matter) will make life *very*
+	 * interesting indeed.
+	 */
+	restore_processor_state();
+
+	return error;
+}
+
 /**
  * create_image - Create a hibernation image.
  * @platform_mode: Whether or not to use the platform driver.
@@ -324,9 +350,7 @@ static int create_image(int platform_mode)
 	in_suspend = 1;
 	save_processor_state();
 	trace_suspend_resume(TPS("machine_suspend"), PM_EVENT_HIBERNATE, true);
-	error = swsusp_arch_suspend();
-	/* Restore control flow magically appears here */
-	restore_processor_state();
+	error = suspend_and_restore();
 	trace_suspend_resume(TPS("machine_suspend"), PM_EVENT_HIBERNATE, false);
 	if (error)
 		pr_err("Error %d creating image\n", error);
