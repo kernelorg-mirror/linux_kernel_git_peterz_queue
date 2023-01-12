@@ -192,7 +192,7 @@ static void fix_processor_context(void)
  * The asm code that gets us here will have restored a usable GDT, although
  * it will be pointing to the wrong alias.
  */
-static void notrace __restore_processor_state(struct saved_context *ctxt)
+static __always_inline void __restore_processor_state(struct saved_context *ctxt)
 {
 	struct cpuinfo_x86 *c;
 
@@ -235,6 +235,13 @@ static void notrace __restore_processor_state(struct saved_context *ctxt)
 	loadsegment(fs, __KERNEL_PERCPU);
 #endif
 
+	/*
+	 * Definitely wrong, but at this point we should have at least enough
+	 * to do CALL/RET (consider SKL callthunks) and this avoids having
+	 * to deal with the noinstr explosion for now :/
+	 */
+	instrumentation_begin();
+
 	/* Restore the TSS, RO GDT, LDT, and usermode-relevant MSRs. */
 	fix_processor_context();
 
@@ -276,10 +283,12 @@ static void notrace __restore_processor_state(struct saved_context *ctxt)
 	 * because some of the MSRs are "emulated" in microcode.
 	 */
 	msr_restore_context(ctxt);
+
+	instrumentation_end();
 }
 
 /* Needed by apm.c */
-void notrace restore_processor_state(void)
+void noinstr restore_processor_state(void)
 {
 	__restore_processor_state(&saved_context);
 }
