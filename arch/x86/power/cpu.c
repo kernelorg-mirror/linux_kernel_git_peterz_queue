@@ -197,25 +197,25 @@ static void notrace __restore_processor_state(struct saved_context *ctxt)
 	struct cpuinfo_x86 *c;
 
 	if (ctxt->misc_enable_saved)
-		wrmsrl(MSR_IA32_MISC_ENABLE, ctxt->misc_enable);
+		native_wrmsrl(MSR_IA32_MISC_ENABLE, ctxt->misc_enable);
 	/*
 	 * control registers
 	 */
 	/* cr4 was introduced in the Pentium CPU */
 #ifdef CONFIG_X86_32
 	if (ctxt->cr4)
-		__write_cr4(ctxt->cr4);
+		native_write_cr4(ctxt->cr4);
 #else
 /* CONFIG X86_64 */
-	wrmsrl(MSR_EFER, ctxt->efer);
-	__write_cr4(ctxt->cr4);
+	native_wrmsrl(MSR_EFER, ctxt->efer);
+	native_write_cr4(ctxt->cr4);
 #endif
-	write_cr3(ctxt->cr3);
-	write_cr2(ctxt->cr2);
-	write_cr0(ctxt->cr0);
+	native_write_cr3(ctxt->cr3);
+	native_write_cr2(ctxt->cr2);
+	native_write_cr0(ctxt->cr0);
 
 	/* Restore the IDT. */
-	load_idt(&ctxt->idt);
+	native_load_idt(&ctxt->idt);
 
 	/*
 	 * Just in case the asm code got us here with the SS, DS, or ES
@@ -230,7 +230,7 @@ static void notrace __restore_processor_state(struct saved_context *ctxt)
 	 * handlers or in complicated helpers like load_gs_index().
 	 */
 #ifdef CONFIG_X86_64
-	wrmsrl(MSR_GS_BASE, ctxt->kernelmode_gs_base);
+	native_wrmsrl(MSR_GS_BASE, ctxt->kernelmode_gs_base);
 #else
 	loadsegment(fs, __KERNEL_PERCPU);
 #endif
@@ -246,15 +246,15 @@ static void notrace __restore_processor_state(struct saved_context *ctxt)
 	loadsegment(ds, ctxt->es);
 	loadsegment(es, ctxt->es);
 	loadsegment(fs, ctxt->fs);
-	load_gs_index(ctxt->gs);
+	native_load_gs_index(ctxt->gs);
 
 	/*
 	 * Restore FSBASE and GSBASE after restoring the selectors, since
 	 * restoring the selectors clobbers the bases.  Keep in mind
 	 * that MSR_KERNEL_GS_BASE is horribly misnamed.
 	 */
-	wrmsrl(MSR_FS_BASE, ctxt->fs_base);
-	wrmsrl(MSR_KERNEL_GS_BASE, ctxt->usermode_gs_base);
+	native_wrmsrl(MSR_FS_BASE, ctxt->fs_base);
+	native_wrmsrl(MSR_KERNEL_GS_BASE, ctxt->usermode_gs_base);
 #else
 	loadsegment(gs, ctxt->gs);
 #endif
