@@ -208,11 +208,11 @@ static void notrace __restore_processor_state(struct saved_context *ctxt)
 #else
 /* CONFIG X86_64 */
 	native_wrmsrl(MSR_EFER, ctxt->efer);
-	native_write_cr4(ctxt->cr4);
+	asm volatile("mov %0,%%cr4": "+r" (ctxt->cr4) : : "memory");
 #endif
 	native_write_cr3(ctxt->cr3);
 	native_write_cr2(ctxt->cr2);
-	native_write_cr0(ctxt->cr0);
+	asm volatile("mov %0,%%cr0": "+r" (ctxt->cr0) : : "memory");
 
 	/* Restore the IDT. */
 	native_load_idt(&ctxt->idt);
