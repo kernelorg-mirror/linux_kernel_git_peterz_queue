@@ -132,22 +132,6 @@ SYM_CODE_START(secondary_startup_64)
 	 * after the boot processor executes this code.
 	 */
 
-	/* Sanitize CPU configuration */
-	call verify_cpu
-
-	/*
-	 * The secondary_startup_64_no_verify entry point is only used by
-	 * SEV-ES guests. In those guests the call to verify_cpu() would cause
-	 * #VC exceptions which can not be handled at this stage of secondary
-	 * CPU bringup.
-	 *
-	 * All non SEV-ES systems, especially Intel systems, need to execute
-	 * verify_cpu() above to make sure NX is enabled.
-	 */
-SYM_INNER_LABEL(secondary_startup_64_no_verify, SYM_L_GLOBAL)
-	UNWIND_HINT_END_OF_STACK
-	ANNOTATE_NOENDBR
-
 	/* Clear %R15 which holds the boot_params pointer on the boot CPU */
 	xorq	%r15, %r15
 
