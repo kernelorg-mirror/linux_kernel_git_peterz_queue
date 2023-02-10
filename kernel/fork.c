@@ -861,7 +861,8 @@ static void do_shoot_lazy_tlb(void *arg)
 
 static void cleanup_lazy_tlbs(struct mm_struct *mm)
 {
-	if (!IS_ENABLED(CONFIG_MMU_LAZY_TLB_SHOOTDOWN)) {
+	if (!IS_ENABLED(CONFIG_MMU_LAZY_TLB_SHOOTDOWN) ||
+	    IS_ENABLED(CONFIG_MMU_LAZY_TLB_IMPLICIT_SHOOTDOWN)) {
 		/*
 		 * In this case, lazy tlb mms are refounted and would not reach
 		 * __mmdrop until all CPUs have switched away and mmdrop()ed.
