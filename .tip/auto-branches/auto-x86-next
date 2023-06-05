@@ -22,6 +22,7 @@ x86/kdump
 x86/microcode
 x86/misc
 x86/mm
+x86/mtrr
 x86/paravirt
 x86/pasid
 x86/platform
