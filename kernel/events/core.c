@@ -4765,11 +4765,14 @@ errout:
 	return ERR_PTR(err);
 }
 
+/*
+ * Returns a matching perf_event_pmu_context with elevated refcount or NULL.
+ */
 static struct perf_event_pmu_context *
 find_get_pmu_context(struct pmu *pmu, struct perf_event_context *ctx,
 		     struct perf_event *event)
 {
-	struct perf_event_pmu_context *new = NULL, *epc;
+	struct perf_event_pmu_context *epc;
 	void *task_ctx_data = NULL;
 
 	if (!ctx->task) {
@@ -4796,16 +4799,14 @@ find_get_pmu_context(struct pmu *pmu, struct perf_event_context *ctx,
 		return epc;
 	}
 
-	new = kzalloc(sizeof(*epc), GFP_KERNEL);
+	void *new __free(kfree) = kzalloc(sizeof(*epc), GFP_KERNEL);
 	if (!new)
-		return ERR_PTR(-ENOMEM);
+		return NULL;
 
 	if (event->attach_state & PERF_ATTACH_TASK_DATA) {
 		task_ctx_data = alloc_task_ctx_data(pmu);
-		if (!task_ctx_data) {
-			kfree(new);
-			return ERR_PTR(-ENOMEM);
-		}
+		if (!task_ctx_data)
+			return NULL;
 	}
 
 	__perf_init_event_pmu_context(new, pmu);
@@ -4828,8 +4829,7 @@ find_get_pmu_context(struct pmu *pmu, struct perf_event_context *ctx,
 		}
 	}
 
-	epc = new;
-	new = NULL;
+	epc = no_free_ptr(new);
 
 	list_add(&epc->pmu_ctx_entry, &ctx->pmu_ctx_list);
 	epc->ctx = ctx;
@@ -4843,7 +4843,6 @@ found_epc:
 	raw_spin_unlock_irq(&ctx->lock);
 
 	free_task_ctx_data(pmu, task_ctx_data);
-	kfree(new);
 
 	return epc;
 }
