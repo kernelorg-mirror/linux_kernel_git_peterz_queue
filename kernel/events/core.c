@@ -13550,11 +13550,11 @@ static int __init perf_event_sysfs_init(void)
 	struct pmu *pmu;
 	int ret;
 
-	mutex_lock(&pmus_lock);
+	guard(mutex)(&pmus_lock);
 
 	ret = bus_register(&pmu_bus);
 	if (ret)
-		goto unlock;
+		return ret;
 
 	list_for_each_entry(pmu, &pmus, entry) {
 		if (pmu->dev)
@@ -13564,12 +13564,8 @@ static int __init perf_event_sysfs_init(void)
 		WARN(ret, "Failed to register pmu: %s, reason %d\n", pmu->name, ret);
 	}
 	pmu_bus_running = 1;
-	ret = 0;
 
-unlock:
-	mutex_unlock(&pmus_lock);
-
-	return ret;
+	return 0;
 }
 device_initcall(perf_event_sysfs_init);
 
