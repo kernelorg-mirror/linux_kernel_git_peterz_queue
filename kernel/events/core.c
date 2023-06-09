@@ -9732,17 +9732,15 @@ static void do_perf_sw_event(enum perf_type_id type, u32 event_id,
 	struct perf_event *event;
 	struct hlist_head *head;
 
-	rcu_read_lock();
+	guard(rcu)();
 	head = find_swevent_head_rcu(swhash, type, event_id);
 	if (!head)
-		goto end;
+		return;
 
 	hlist_for_each_entry_rcu(event, head, hlist_entry) {
 		if (perf_swevent_match(event, type, event_id, data, regs))
 			perf_swevent_event(event, nr, data, regs);
 	}
-end:
-	rcu_read_unlock();
 }
 
 DEFINE_PER_CPU(struct pt_regs, __perf_regs[4]);
@@ -9777,16 +9775,13 @@ void __perf_sw_event(u32 event_id, u64 nr, struct pt_regs *regs, u64 addr)
 {
 	int rctx;
 
-	preempt_disable_notrace();
+	guard(preempt_notrace)();
 	rctx = perf_swevent_get_recursion_context();
 	if (unlikely(rctx < 0))
-		goto fail;
+		return;
 
 	___perf_sw_event(event_id, nr, regs, addr);
-
 	perf_swevent_put_recursion_context(rctx);
-fail:
-	preempt_enable_notrace();
 }
 
 static void perf_swevent_read(struct perf_event *event)
@@ -9875,21 +9870,17 @@ static int swevent_hlist_get_cpu(int cpu)
 	struct swevent_htable *swhash = &per_cpu(swevent_htable, cpu);
 	int err = 0;
 
-	mutex_lock(&swhash->hlist_mutex);
+	guard(mutex)(&swhash->hlist_mutex);
 	if (!swevent_hlist_deref(swhash) &&
 	    cpumask_test_cpu(cpu, perf_online_mask)) {
 		struct swevent_hlist *hlist;
 
 		hlist = kzalloc(sizeof(*hlist), GFP_KERNEL);
-		if (!hlist) {
-			err = -ENOMEM;
-			goto exit;
-		}
+		if (!hlist)
+			return -ENOMEM;
 		rcu_assign_pointer(swhash->swevent_hlist, hlist);
 	}
 	swhash->hlist_refcount++;
-exit:
-	mutex_unlock(&swhash->hlist_mutex);
 
 	return err;
 }
@@ -10158,16 +10149,12 @@ void perf_tp_event(u16 event_type, u64 count, void *record, int entry_size,
 	if (task && task != current) {
 		struct perf_event_context *ctx;
 
-		rcu_read_lock();
+		guard(rcu)();
 		ctx = rcu_dereference(task->perf_event_ctxp);
-		if (!ctx)
-			goto unlock;
-
-		raw_spin_lock(&ctx->lock);
-		perf_tp_event_target_task(count, record, regs, &data, ctx);
-		raw_spin_unlock(&ctx->lock);
-unlock:
-		rcu_read_unlock();
+		if (ctx) {
+			guard(raw_spinlock)(&ctx->lock);
+			perf_tp_event_target_task(count, record, regs, &data, ctx);
+		}
 	}
 
 	perf_swevent_put_recursion_context(rctx);
