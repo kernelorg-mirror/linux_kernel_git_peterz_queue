@@ -12613,12 +12613,6 @@ perf_event_create_kernel_counter(struct perf_event_attr *attr, int cpu,
 				 perf_overflow_handler_t overflow_handler,
 				 void *context)
 {
-	struct perf_event_pmu_context *pmu_ctx;
-	struct perf_event_context *ctx;
-	struct perf_event *event;
-	struct pmu *pmu;
-	int err;
-
 	/*
 	 * Grouping is not supported for kernel events, neither is 'AUX',
 	 * make sure the caller's intentions are adjusted.
@@ -12626,16 +12620,16 @@ perf_event_create_kernel_counter(struct perf_event_attr *attr, int cpu,
 	if (attr->aux_output)
 		return ERR_PTR(-EINVAL);
 
-	event = perf_event_alloc(attr, cpu, task, NULL, NULL,
+
+	struct perf_event *event __free(free_event) =
+		perf_event_alloc(attr, cpu, task, NULL, NULL,
 				 overflow_handler, context, -1);
-	if (IS_ERR(event)) {
-		err = PTR_ERR(event);
-		goto err;
-	}
+	if (IS_ERR(event))
+		return event;
 
 	/* Mark owner so we could distinguish it from user events. */
 	event->owner = TASK_TOMBSTONE;
-	pmu = event->pmu;
+	struct pmu *pmu = event->pmu;
 
 	if (pmu->task_ctx_nr == perf_sw_context)
 		event->event_caps |= PERF_EV_CAP_SOFTWARE;
@@ -12643,25 +12637,21 @@ perf_event_create_kernel_counter(struct perf_event_attr *attr, int cpu,
 	/*
 	 * Get the target context (task or percpu):
 	 */
-	ctx = find_get_context(task, event);
-	if (IS_ERR(ctx)) {
-		err = PTR_ERR(ctx);
-		goto err_alloc;
-	}
+	CLASS(find_get_ctx, ctx)(task, event);
+	if (IS_ERR(ctx))
+		return (void *)ctx;
 
 	WARN_ON_ONCE(ctx->parent_ctx);
-	mutex_lock(&ctx->mutex);
-	if (ctx->task == TASK_TOMBSTONE) {
-		err = -ESRCH;
-		goto err_unlock;
-	}
+	guard(mutex)(&ctx->mutex);
 
-	pmu_ctx = find_get_pmu_context(pmu, ctx, event);
-	if (IS_ERR(pmu_ctx)) {
-		err = PTR_ERR(pmu_ctx);
-		goto err_unlock;
-	}
-	event->pmu_ctx = pmu_ctx;
+	if (ctx->task == TASK_TOMBSTONE)
+		return ERR_PTR(-ESRCH);
+
+
+	struct perf_event_pmu_context *pmu_ctx __free(put_pmu_ctx) =
+		find_get_pmu_context(pmu, ctx, event);
+	if (!pmu_ctx)
+		return ERR_PTR(-ENOMEM);
 
 	if (!task) {
 		/*
@@ -12672,34 +12662,17 @@ perf_event_create_kernel_counter(struct perf_event_attr *attr, int cpu,
 		 */
 		struct perf_cpu_context *cpuctx =
 			container_of(ctx, struct perf_cpu_context, ctx);
-		if (!cpuctx->online) {
-			err = -ENODEV;
-			goto err_pmu_ctx;
-		}
+		if (!cpuctx->online)
+			return ERR_PTR(-ENODEV);
 	}
 
-	if (!exclusive_event_installable(event, ctx)) {
-		err = -EBUSY;
-		goto err_pmu_ctx;
-	}
+	if (!exclusive_event_installable(event, ctx))
+		return ERR_PTR(-EBUSY);
 
-	perf_install_in_context(ctx, event, event->cpu);
-	perf_unpin_context(ctx);
-	mutex_unlock(&ctx->mutex);
+	event->pmu_ctx = no_free_ptr(pmu_ctx);
+	perf_install_in_context(get_ctx(ctx), event, event->cpu);
 
-	return event;
-
-err_pmu_ctx:
-	put_pmu_ctx(pmu_ctx);
-	event->pmu_ctx = NULL; /* _free_event() */
-err_unlock:
-	mutex_unlock(&ctx->mutex);
-	perf_unpin_context(ctx);
-	put_ctx(ctx);
-err_alloc:
-	free_event(event);
-err:
-	return ERR_PTR(err);
+	return_ptr(event);
 }
 EXPORT_SYMBOL_GPL(perf_event_create_kernel_counter);
 
