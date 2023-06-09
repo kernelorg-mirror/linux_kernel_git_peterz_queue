@@ -713,6 +713,9 @@ static void perf_ctx_enable(struct perf_event_context *ctx, bool cgroup)
 	}
 }
 
+DEFINE_GUARD(perf_ctx_disable, struct perf_event_context *,
+	     perf_ctx_disable(_T, false), perf_ctx_enable(_T, false))
+
 static void ctx_sched_out(struct perf_event_context *ctx, enum event_type_t event_type);
 static void ctx_sched_in(struct perf_event_context *ctx, enum event_type_t event_type);
 
@@ -3903,31 +3906,27 @@ static void perf_event_context_sched_in(struct task_struct *task)
 	struct perf_cpu_context *cpuctx = this_cpu_ptr(&perf_cpu_context);
 	struct perf_event_context *ctx;
 
-	rcu_read_lock();
+	guard(rcu)();
+
 	ctx = rcu_dereference(task->perf_event_ctxp);
 	if (!ctx)
-		goto rcu_unlock;
+		return;
 
-	if (cpuctx->task_ctx == ctx) {
-		perf_ctx_lock(cpuctx, ctx);
-		perf_ctx_disable(ctx, false);
-
-		perf_ctx_sched_task_cb(ctx, true);
-
-		perf_ctx_enable(ctx, false);
-		perf_ctx_unlock(cpuctx, ctx);
-		goto rcu_unlock;
-	}
-
-	perf_ctx_lock(cpuctx, ctx);
+	guard(perf_ctx_lock)(cpuctx, ctx);
 	/*
 	 * We must check ctx->nr_events while holding ctx->lock, such
 	 * that we serialize against perf_install_in_context().
 	 */
 	if (!ctx->nr_events)
-		goto unlock;
+		return;
 
-	perf_ctx_disable(ctx, false);
+	guard(perf_ctx_disable)(ctx);
+
+	if (cpuctx->task_ctx == ctx) {
+		perf_ctx_sched_task_cb(ctx, true);
+		return;
+	}
+
 	/*
 	 * We want to keep the following priority order:
 	 * cpu pinned (that don't need to move), task pinned,
@@ -3947,13 +3946,6 @@ static void perf_event_context_sched_in(struct task_struct *task)
 
 	if (!RB_EMPTY_ROOT(&ctx->pinned_groups.tree))
 		perf_ctx_enable(&cpuctx->ctx, false);
-
-	perf_ctx_enable(ctx, false);
-
-unlock:
-	perf_ctx_unlock(cpuctx, ctx);
-rcu_unlock:
-	rcu_read_unlock();
 }
 
 /*
