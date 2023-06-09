@@ -2738,13 +2738,13 @@ static int  __perf_install_in_context(void *info)
 	struct perf_cpu_context *cpuctx = this_cpu_ptr(&perf_cpu_context);
 	struct perf_event_context *task_ctx = cpuctx->task_ctx;
 	bool reprogram = true;
-	int ret = 0;
 
-	raw_spin_lock(&cpuctx->ctx.lock);
-	if (ctx->task) {
-		raw_spin_lock(&ctx->lock);
+	if (ctx->task)
 		task_ctx = ctx;
 
+	guard(perf_ctx_lock)(cpuctx, task_ctx);
+
+	if (ctx->task) {
 		reprogram = (ctx->task == current);
 
 		/*
@@ -2754,14 +2754,10 @@ static int  __perf_install_in_context(void *info)
 		 * If its not running, we don't care, ctx->lock will
 		 * serialize against it becoming runnable.
 		 */
-		if (task_curr(ctx->task) && !reprogram) {
-			ret = -ESRCH;
-			goto unlock;
-		}
+		if (task_curr(ctx->task) && !reprogram)
+			return -ESRCH;
 
 		WARN_ON_ONCE(reprogram && cpuctx->task_ctx && cpuctx->task_ctx != ctx);
-	} else if (task_ctx) {
-		raw_spin_lock(&task_ctx->lock);
 	}
 
 #ifdef CONFIG_CGROUP_PERF
@@ -2784,10 +2780,7 @@ static int  __perf_install_in_context(void *info)
 		add_event_to_ctx(event, ctx);
 	}
 
-unlock:
-	perf_ctx_unlock(cpuctx, task_ctx);
-
-	return ret;
+	return 0;
 }
 
 static bool exclusive_event_installable(struct perf_event *event,
