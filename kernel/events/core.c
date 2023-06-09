@@ -7913,8 +7913,8 @@ perf_iterate_sb(perf_iterate_f output, void *data,
 {
 	struct perf_event_context *ctx;
 
-	rcu_read_lock();
-	preempt_disable();
+	guard(rcu)();
+	guard(preempt)();
 
 	/*
 	 * If we have task_ctx != NULL we only notify the task context itself.
@@ -7923,7 +7923,7 @@ perf_iterate_sb(perf_iterate_f output, void *data,
 	 */
 	if (task_ctx) {
 		perf_iterate_ctx(task_ctx, output, data, false);
-		goto done;
+		return;
 	}
 
 	perf_iterate_sb_cpu(output, data);
@@ -7931,9 +7931,6 @@ perf_iterate_sb(perf_iterate_f output, void *data,
 	ctx = rcu_dereference(current->perf_event_ctxp);
 	if (ctx)
 		perf_iterate_ctx(ctx, output, data, false);
-done:
-	preempt_enable();
-	rcu_read_unlock();
 }
 
 /*
