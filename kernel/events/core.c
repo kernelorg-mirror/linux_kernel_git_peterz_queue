@@ -1157,6 +1157,8 @@ void perf_pmu_enable(struct pmu *pmu)
 		pmu->pmu_enable(pmu);
 }
 
+DEFINE_GUARD(perf_pmu_disable, struct pmu *, perf_pmu_disable(_T), perf_pmu_enable(_T))
+
 static void perf_assert_pmu_disabled(struct pmu *pmu)
 {
 	WARN_ON_ONCE(*this_cpu_ptr(pmu->pmu_disable_count) == 0);
@@ -2495,7 +2497,6 @@ event_sched_in(struct perf_event *event, struct perf_event_context *ctx)
 {
 	struct perf_event_pmu_context *epc = event->pmu_ctx;
 	struct perf_cpu_pmu_context *cpc = this_cpu_ptr(epc->pmu->cpu_pmu_context);
-	int ret = 0;
 
 	WARN_ON_ONCE(event->ctx != ctx);
 
@@ -2523,15 +2524,14 @@ event_sched_in(struct perf_event *event, struct perf_event_context *ctx)
 		event->hw.interrupts = 0;
 	}
 
-	perf_pmu_disable(event->pmu);
+	guard(perf_pmu_disable)(event->pmu);
 
 	perf_log_itrace_start(event);
 
 	if (event->pmu->add(event, PERF_EF_START)) {
 		perf_event_set_state(event, PERF_EVENT_STATE_INACTIVE);
 		event->oncpu = -1;
-		ret = -EAGAIN;
-		goto out;
+		return -EAGAIN;
 	}
 
 	if (!is_software_event(event))
@@ -2542,10 +2542,7 @@ event_sched_in(struct perf_event *event, struct perf_event_context *ctx)
 	if (event->attr.exclusive)
 		cpc->exclusive = 1;
 
-out:
-	perf_pmu_enable(event->pmu);
-
-	return ret;
+	return 0;
 }
 
 static int
