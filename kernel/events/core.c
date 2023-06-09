@@ -4314,38 +4314,35 @@ static void perf_event_enable_on_exec(struct perf_event_context *ctx)
 	enum event_type_t event_type = 0;
 	struct perf_cpu_context *cpuctx;
 	struct perf_event *event;
-	unsigned long flags;
 	int enabled = 0;
 
-	local_irq_save(flags);
-	if (WARN_ON_ONCE(current->perf_event_ctxp != ctx))
-		goto out;
+	scoped_guard (irqsave) {
+		if (WARN_ON_ONCE(current->perf_event_ctxp != ctx))
+			return;
 
-	if (!ctx->nr_events)
-		goto out;
+		if (!ctx->nr_events)
+			return;
 
-	cpuctx = this_cpu_ptr(&perf_cpu_context);
-	perf_ctx_lock(cpuctx, ctx);
-	ctx_sched_out(ctx, EVENT_TIME);
+		cpuctx = this_cpu_ptr(&perf_cpu_context);
+		guard(perf_ctx_lock)(cpuctx, ctx);
 
-	list_for_each_entry(event, &ctx->event_list, event_entry) {
-		enabled |= event_enable_on_exec(event, ctx);
-		event_type |= get_event_type(event);
+		ctx_sched_out(ctx, EVENT_TIME);
+
+		list_for_each_entry(event, &ctx->event_list, event_entry) {
+			enabled |= event_enable_on_exec(event, ctx);
+			event_type |= get_event_type(event);
+		}
+
+		/*
+		 * Unclone and reschedule this context if we enabled any event.
+		 */
+		if (enabled) {
+			clone_ctx = unclone_ctx(ctx);
+			ctx_resched(cpuctx, ctx, event_type);
+		} else {
+			ctx_sched_in(ctx, EVENT_TIME);
+		}
 	}
-
-	/*
-	 * Unclone and reschedule this context if we enabled any event.
-	 */
-	if (enabled) {
-		clone_ctx = unclone_ctx(ctx);
-		ctx_resched(cpuctx, ctx, event_type);
-	} else {
-		ctx_sched_in(ctx, EVENT_TIME);
-	}
-	perf_ctx_unlock(cpuctx, ctx);
-
-out:
-	local_irq_restore(flags);
 
 	if (clone_ctx)
 		put_ctx(clone_ctx);
@@ -4363,33 +4360,28 @@ static void perf_event_remove_on_exec(struct perf_event_context *ctx)
 {
 	struct perf_event_context *clone_ctx = NULL;
 	struct perf_event *event, *next;
-	unsigned long flags;
 	bool modified = false;
 
-	mutex_lock(&ctx->mutex);
+	scoped_guard (mutex, &ctx->mutex) {
+		if (WARN_ON_ONCE(ctx->task != current))
+			return;
 
-	if (WARN_ON_ONCE(ctx->task != current))
-		goto unlock;
+		list_for_each_entry_safe(event, next, &ctx->event_list, event_entry) {
+			if (!event->attr.remove_on_exec)
+				continue;
 
-	list_for_each_entry_safe(event, next, &ctx->event_list, event_entry) {
-		if (!event->attr.remove_on_exec)
-			continue;
+			if (!is_kernel_event(event))
+				perf_remove_from_owner(event);
 
-		if (!is_kernel_event(event))
-			perf_remove_from_owner(event);
+			modified = true;
 
-		modified = true;
+			perf_event_exit_event(event, ctx);
+		}
 
-		perf_event_exit_event(event, ctx);
+		guard(raw_spinlock_irqsave)(&ctx->lock);
+		if (modified)
+			clone_ctx = unclone_ctx(ctx);
 	}
-
-	raw_spin_lock_irqsave(&ctx->lock, flags);
-	if (modified)
-		clone_ctx = unclone_ctx(ctx);
-	raw_spin_unlock_irqrestore(&ctx->lock, flags);
-
-unlock:
-	mutex_unlock(&ctx->mutex);
 
 	if (clone_ctx)
 		put_ctx(clone_ctx);
