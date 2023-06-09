@@ -6001,10 +6001,10 @@ static void perf_event_init_userpage(struct perf_event *event)
 	struct perf_event_mmap_page *userpg;
 	struct perf_buffer *rb;
 
-	rcu_read_lock();
+	guard(rcu)();
 	rb = rcu_dereference(event->rb);
 	if (!rb)
-		goto unlock;
+		return;
 
 	userpg = rb->user_page;
 
@@ -6013,9 +6013,6 @@ static void perf_event_init_userpage(struct perf_event *event)
 	userpg->size = offsetof(struct perf_event_mmap_page, __reserved);
 	userpg->data_offset = PAGE_SIZE;
 	userpg->data_size = perf_data_size(rb);
-
-unlock:
-	rcu_read_unlock();
 }
 
 void __weak arch_perf_update_userpage(
@@ -6034,10 +6031,10 @@ void perf_event_update_userpage(struct perf_event *event)
 	struct perf_buffer *rb;
 	u64 enabled, running, now;
 
-	rcu_read_lock();
+	guard(rcu)();
 	rb = rcu_dereference(event->rb);
 	if (!rb)
-		goto unlock;
+		return;
 
 	/*
 	 * compute total_time_enabled, total_time_running
@@ -6055,7 +6052,7 @@ void perf_event_update_userpage(struct perf_event *event)
 	 * Disable preemption to guarantee consistent time stamps are stored to
 	 * the user page.
 	 */
-	preempt_disable();
+	guard(preempt)();
 	++userpg->lock;
 	barrier();
 	userpg->index = perf_event_index(event);
@@ -6073,9 +6070,6 @@ void perf_event_update_userpage(struct perf_event *event)
 
 	barrier();
 	++userpg->lock;
-	preempt_enable();
-unlock:
-	rcu_read_unlock();
 }
 EXPORT_SYMBOL_GPL(perf_event_update_userpage);
 
@@ -6091,27 +6085,23 @@ static vm_fault_t perf_mmap_fault(struct vm_fault *vmf)
 		return ret;
 	}
 
-	rcu_read_lock();
+	guard(rcu)();
 	rb = rcu_dereference(event->rb);
 	if (!rb)
-		goto unlock;
+		return ret;
 
 	if (vmf->pgoff && (vmf->flags & FAULT_FLAG_WRITE))
-		goto unlock;
+		return ret;
 
 	vmf->page = perf_mmap_to_page(rb, vmf->pgoff);
 	if (!vmf->page)
-		goto unlock;
+		return ret;
 
 	get_page(vmf->page);
 	vmf->page->mapping = vmf->vma->vm_file->f_mapping;
 	vmf->page->index   = vmf->pgoff;
 
-	ret = 0;
-unlock:
-	rcu_read_unlock();
-
-	return ret;
+	return 0;
 }
 
 static void ring_buffer_attach(struct perf_event *event,
