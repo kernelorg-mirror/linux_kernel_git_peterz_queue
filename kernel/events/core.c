@@ -5792,6 +5792,11 @@ static inline struct fd perf_fdget(int fd)
 	return f;
 }
 
+static inline bool is_perf_fd(struct fd fd)
+{
+	return fd.file && fd.file->f_op == &perf_fops;
+}
+
 static int perf_event_set_output(struct perf_event *event,
 				 struct perf_event *output_event);
 static int perf_event_set_filter(struct perf_event *event, void __user *arg);
@@ -5837,19 +5842,15 @@ static long _perf_ioctl(struct perf_event *event, unsigned int cmd, unsigned lon
 
 	case PERF_EVENT_IOC_SET_OUTPUT:
 	{
-		int ret;
 		if (arg != -1) {
 			struct perf_event *output_event;
-			struct fd output = perf_fdget(arg);
-			if (!output.file)
+			CLASS(fd, output)(arg);
+			if (!is_perf_fd(output))
 				return -EBADF;
 			output_event = output.file->private_data;
-			ret = perf_event_set_output(event, output_event);
-			fdput(output);
-		} else {
-			ret = perf_event_set_output(event, NULL);
+			return perf_event_set_output(event, output_event);
 		}
-		return ret;
+		return perf_event_set_output(event, NULL);
 	}
 
 	case PERF_EVENT_IOC_SET_FILTER:
