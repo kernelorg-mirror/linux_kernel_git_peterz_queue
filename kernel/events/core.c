@@ -2879,7 +2879,7 @@ again:
 	if (!task_function_call(task, __perf_install_in_context, event))
 		return;
 
-	raw_spin_lock_irq(&ctx->lock);
+	guard(raw_spinlock_irq)(&ctx->lock);
 	task = ctx->task;
 	if (WARN_ON_ONCE(task == TASK_TOMBSTONE)) {
 		/*
@@ -2887,19 +2887,15 @@ again:
 		 * cannot happen), and we hold ctx->mutex, which serializes us
 		 * against perf_event_exit_task_context().
 		 */
-		raw_spin_unlock_irq(&ctx->lock);
 		return;
 	}
 	/*
 	 * If the task is not running, ctx->lock will avoid it becoming so,
 	 * thus we can safely install the event.
 	 */
-	if (task_curr(task)) {
-		raw_spin_unlock_irq(&ctx->lock);
+	if (task_curr(task))
 		goto again;
-	}
 	add_event_to_ctx(event, ctx);
-	raw_spin_unlock_irq(&ctx->lock);
 }
 
 /*
