@@ -214,6 +214,19 @@ struct event_function_struct {
 	void *data;
 };
 
+typedef struct {
+	struct perf_cpu_context *cpuctx;
+	struct perf_event_context *ctx;
+} class_perf_ctx_lock_t;
+
+static inline void class_perf_ctx_lock_destructor(class_perf_ctx_lock_t *_T)
+{ perf_ctx_unlock(_T->cpuctx, _T->ctx); }
+
+static inline class_perf_ctx_lock_t
+class_perf_ctx_lock_constructor(struct perf_cpu_context *cpuctx,
+				struct perf_event_context *ctx)
+{ perf_ctx_lock(cpuctx, ctx); return (class_perf_ctx_lock_t){ cpuctx, ctx }; }
+
 static int event_function(void *info)
 {
 	struct event_function_struct *efs = info;
@@ -221,20 +234,17 @@ static int event_function(void *info)
 	struct perf_event_context *ctx = event->ctx;
 	struct perf_cpu_context *cpuctx = this_cpu_ptr(&perf_cpu_context);
 	struct perf_event_context *task_ctx = cpuctx->task_ctx;
-	int ret = 0;
 
 	lockdep_assert_irqs_disabled();
+	guard(perf_ctx_lock)(cpuctx, task_ctx);
 
-	perf_ctx_lock(cpuctx, task_ctx);
 	/*
 	 * Since we do the IPI call without holding ctx->lock things can have
 	 * changed, double check we hit the task we set out to hit.
 	 */
 	if (ctx->task) {
-		if (ctx->task != current) {
-			ret = -ESRCH;
-			goto unlock;
-		}
+		if (ctx->task != current)
+			return -ESRCH;
 
 		/*
 		 * We only use event_function_call() on established contexts,
@@ -254,10 +264,8 @@ static int event_function(void *info)
 	}
 
 	efs->func(event, cpuctx, ctx, efs->data);
-unlock:
-	perf_ctx_unlock(cpuctx, task_ctx);
 
-	return ret;
+	return 0;
 }
 
 static void event_function_call(struct perf_event *event, event_f func, void *data)
@@ -329,11 +337,11 @@ static void event_function_local(struct perf_event *event, event_f func, void *d
 		task_ctx = ctx;
 	}
 
-	perf_ctx_lock(cpuctx, task_ctx);
+	guard(perf_ctx_lock)(cpuctx, task_ctx);
 
 	task = ctx->task;
 	if (task == TASK_TOMBSTONE)
-		goto unlock;
+		return;
 
 	if (task) {
 		/*
@@ -343,18 +351,16 @@ static void event_function_local(struct perf_event *event, event_f func, void *d
 		 */
 		if (ctx->is_active) {
 			if (WARN_ON_ONCE(task != current))
-				goto unlock;
+				return;
 
 			if (WARN_ON_ONCE(cpuctx->task_ctx != ctx))
-				goto unlock;
+				return;
 		}
 	} else {
 		WARN_ON_ONCE(&cpuctx->ctx != ctx);
 	}
 
 	func(event, cpuctx, ctx, data);
-unlock:
-	perf_ctx_unlock(cpuctx, task_ctx);
 }
 
 #define PERF_FLAG_ALL (PERF_FLAG_FD_NO_GROUP |\
