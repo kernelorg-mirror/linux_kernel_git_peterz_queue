@@ -6209,6 +6209,9 @@ void ring_buffer_put(struct perf_buffer *rb)
 	call_rcu(&rb->rcu_head, rb_free_rcu);
 }
 
+DEFINE_CLASS(ring_buffer_get, struct perf_buffer *, ring_buffer_put(_T),
+	     ring_buffer_get(event), struct perf_event *event)
+
 static void perf_mmap_open(struct vm_area_struct *vma)
 {
 	struct perf_event *event = vma->vm_file->private_data;
@@ -6236,7 +6239,7 @@ static void perf_pmu_output_stop(struct perf_event *event);
 static void perf_mmap_close(struct vm_area_struct *vma)
 {
 	struct perf_event *event = vma->vm_file->private_data;
-	struct perf_buffer *rb = ring_buffer_get(event);
+	CLASS(ring_buffer_get, rb)(event);
 	struct user_struct *mmap_user = rb->mmap_user;
 	int mmap_locked = rb->mmap_locked;
 	unsigned long size = perf_data_size(rb);
@@ -6275,14 +6278,14 @@ static void perf_mmap_close(struct vm_area_struct *vma)
 		detach_rest = true;
 
 	if (!atomic_dec_and_mutex_lock(&event->mmap_count, &event->mmap_mutex))
-		goto out_put;
+		return;
 
 	ring_buffer_attach(event, NULL);
 	mutex_unlock(&event->mmap_mutex);
 
 	/* If there's still other mmap()s of this buffer, we're done. */
 	if (!detach_rest)
-		goto out_put;
+		return;
 
 	/*
 	 * No other mmap()s, detach from all other events that might redirect
@@ -6339,9 +6342,6 @@ again:
 			&mmap_user->locked_vm);
 	atomic64_sub(mmap_locked, &vma->vm_mm->pinned_vm);
 	free_uid(mmap_user);
-
-out_put:
-	ring_buffer_put(rb); /* could be last */
 }
 
 static const struct vm_operations_struct perf_mmap_vmops = {
@@ -6992,14 +6992,13 @@ static void perf_aux_sample_output(struct perf_event *event,
 				   struct perf_sample_data *data)
 {
 	struct perf_event *sampler = event->aux_event;
-	struct perf_buffer *rb;
 	unsigned long pad;
 	long size;
 
 	if (WARN_ON_ONCE(!sampler || !data->aux_size))
 		return;
 
-	rb = ring_buffer_get(sampler);
+	CLASS(ring_buffer_get, rb)(sampler);
 	if (!rb)
 		return;
 
@@ -7012,7 +7011,7 @@ static void perf_aux_sample_output(struct perf_event *event,
 	 * like to know.
 	 */
 	if (WARN_ON_ONCE(size < 0))
-		goto out_put;
+		return;
 
 	/*
 	 * The pad comes from ALIGN()ing data->aux_size up to u64 in
@@ -7026,9 +7025,6 @@ static void perf_aux_sample_output(struct perf_event *event,
 		u64 zero = 0;
 		perf_output_copy(handle, &zero, pad);
 	}
-
-out_put:
-	ring_buffer_put(rb);
 }
 
 /*
