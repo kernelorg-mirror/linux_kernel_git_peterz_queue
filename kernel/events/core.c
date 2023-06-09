@@ -5843,18 +5843,17 @@ EXPORT_SYMBOL_GPL(perf_event_period);
 
 static const struct file_operations perf_fops;
 
-static inline int perf_fget_light(int fd, struct fd *p)
+static inline struct fd perf_fdget(int fd)
 {
 	struct fd f = fdget(fd);
 	if (!f.file)
-		return -EBADF;
+		return fdnull;
 
 	if (f.file->f_op != &perf_fops) {
 		fdput(f);
-		return -EBADF;
+		return fdnull;
 	}
-	*p = f;
-	return 0;
+	return f;
 }
 
 static int perf_event_set_output(struct perf_event *event,
@@ -5905,10 +5904,9 @@ static long _perf_ioctl(struct perf_event *event, unsigned int cmd, unsigned lon
 		int ret;
 		if (arg != -1) {
 			struct perf_event *output_event;
-			struct fd output;
-			ret = perf_fget_light(arg, &output);
-			if (ret)
-				return ret;
+			struct fd output = perf_fdget(arg);
+			if (!output.file)
+				return -EBADF;
 			output_event = output.file->private_data;
 			ret = perf_event_set_output(event, output_event);
 			fdput(output);
@@ -12471,9 +12469,11 @@ SYSCALL_DEFINE5(perf_event_open,
 		return event_fd;
 
 	if (group_fd != -1) {
-		err = perf_fget_light(group_fd, &group);
-		if (err)
+		group = perf_fdget(group_fd);
+		if (!group.file) {
+			err = -EBADF;
 			goto err_fd;
+		}
 		group_leader = group.file->private_data;
 		if (flags & PERF_FLAG_FD_OUTPUT)
 			output_event = group_leader;
