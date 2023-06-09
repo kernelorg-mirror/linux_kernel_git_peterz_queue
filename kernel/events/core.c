@@ -10538,6 +10538,8 @@ static void free_filters_list(struct list_head *filters)
 	}
 }
 
+DEFINE_FREE(filter_list, struct list_head *, if (_T) free_filters_list(_T))
+
 /*
  * Free existing address filters and optionally install new ones
  */
@@ -10701,13 +10703,15 @@ perf_event_parse_addr_filter(struct perf_event *event, char *fstr,
 			     struct list_head *filters)
 {
 	struct perf_addr_filter *filter = NULL;
-	char *start, *orig, *filename = NULL;
 	substring_t args[MAX_OPT_ARGS];
 	int state = IF_STATE_ACTION, token;
 	unsigned int kernel = 0;
-	int ret = -EINVAL;
+	char *start;
+	int ret;
 
-	orig = fstr = kstrdup(fstr, GFP_KERNEL);
+	struct list_head *fguard __free(filter_list) = filters;
+	char *filename __free(kfree) = NULL;
+	char *orig __free(kfree) = fstr = kstrdup(fstr, GFP_KERNEL);
 	if (!fstr)
 		return -ENOMEM;
 
@@ -10717,7 +10721,6 @@ perf_event_parse_addr_filter(struct perf_event *event, char *fstr,
 			[IF_ACT_START]	= PERF_ADDR_FILTER_ACTION_START,
 			[IF_ACT_STOP]	= PERF_ADDR_FILTER_ACTION_STOP,
 		};
-		ret = -EINVAL;
 
 		if (!*start)
 			continue;
@@ -10726,7 +10729,7 @@ perf_event_parse_addr_filter(struct perf_event *event, char *fstr,
 		if (state == IF_STATE_ACTION) {
 			filter = perf_addr_filter_new(event, filters);
 			if (!filter)
-				goto fail;
+				return -EINVAL;
 		}
 
 		token = match_token(start, if_tokens, args);
@@ -10735,7 +10738,7 @@ perf_event_parse_addr_filter(struct perf_event *event, char *fstr,
 		case IF_ACT_START:
 		case IF_ACT_STOP:
 			if (state != IF_STATE_ACTION)
-				goto fail;
+				return -EINVAL;
 
 			filter->action = actions[token];
 			state = IF_STATE_SOURCE;
@@ -10749,18 +10752,18 @@ perf_event_parse_addr_filter(struct perf_event *event, char *fstr,
 		case IF_SRC_FILEADDR:
 		case IF_SRC_FILE:
 			if (state != IF_STATE_SOURCE)
-				goto fail;
+				return -EINVAL;
 
 			*args[0].to = 0;
 			ret = kstrtoul(args[0].from, 0, &filter->offset);
 			if (ret)
-				goto fail;
+				return ret;
 
 			if (token == IF_SRC_KERNEL || token == IF_SRC_FILE) {
 				*args[1].to = 0;
 				ret = kstrtoul(args[1].from, 0, &filter->size);
 				if (ret)
-					goto fail;
+					return ret;
 			}
 
 			if (token == IF_SRC_FILE || token == IF_SRC_FILEADDR) {
@@ -10768,17 +10771,15 @@ perf_event_parse_addr_filter(struct perf_event *event, char *fstr,
 
 				kfree(filename);
 				filename = match_strdup(&args[fpos]);
-				if (!filename) {
-					ret = -ENOMEM;
-					goto fail;
-				}
+				if (!filename)
+					return -ENOMEM;
 			}
 
 			state = IF_STATE_END;
 			break;
 
 		default:
-			goto fail;
+			return -EINVAL;
 		}
 
 		/*
@@ -10787,19 +10788,17 @@ perf_event_parse_addr_filter(struct perf_event *event, char *fstr,
 		 * attribute.
 		 */
 		if (state == IF_STATE_END) {
-			ret = -EINVAL;
-
 			/*
 			 * ACTION "filter" must have a non-zero length region
 			 * specified.
 			 */
 			if (filter->action == PERF_ADDR_FILTER_ACTION_FILTER &&
 			    !filter->size)
-				goto fail;
+				return -EINVAL;
 
 			if (!kernel) {
 				if (!filename)
-					goto fail;
+					return -EINVAL;
 
 				/*
 				 * For now, we only support file-based filters
@@ -10809,21 +10808,19 @@ perf_event_parse_addr_filter(struct perf_event *event, char *fstr,
 				 * mapped at different virtual addresses in
 				 * different processes.
 				 */
-				ret = -EOPNOTSUPP;
 				if (!event->ctx->task)
-					goto fail;
+					return -EOPNOTSUPP;
 
 				/* look up the path and grab its inode */
 				ret = kern_path(filename, LOOKUP_FOLLOW,
 						&filter->path);
 				if (ret)
-					goto fail;
+					return ret;
 
-				ret = -EINVAL;
 				if (!filter->path.dentry ||
 				    !S_ISREG(d_inode(filter->path.dentry)
 					     ->i_mode))
-					goto fail;
+					return -EINVAL;
 
 				event->addr_filters.nr_file_filters++;
 			}
@@ -10838,19 +10835,10 @@ perf_event_parse_addr_filter(struct perf_event *event, char *fstr,
 	}
 
 	if (state != IF_STATE_ACTION)
-		goto fail;
+		return -EINVAL;
 
-	kfree(filename);
-	kfree(orig);
-
+	filters = no_free_ptr(fguard); // allow filters to escape to the caller
 	return 0;
-
-fail:
-	kfree(filename);
-	free_filters_list(filters);
-	kfree(orig);
-
-	return ret;
 }
 
 static int
