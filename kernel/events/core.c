@@ -11349,43 +11349,40 @@ static void pmu_dev_release(struct device *dev)
 
 static int pmu_dev_alloc(struct pmu *pmu)
 {
-	int ret = -ENOMEM;
+	int ret;
 
-	pmu->dev = kzalloc(sizeof(struct device), GFP_KERNEL);
-	if (!pmu->dev)
-		goto out;
+	struct device *dev __free(put_device) =
+		kzalloc(sizeof(struct device), GFP_KERNEL);
+	if (!dev)
+		return -ENOMEM;
 
-	pmu->dev->groups = pmu->attr_groups;
-	device_initialize(pmu->dev);
+	dev->groups = pmu->attr_groups;
+	device_initialize(dev);
 
-	dev_set_drvdata(pmu->dev, pmu);
-	pmu->dev->bus = &pmu_bus;
-	pmu->dev->parent = pmu->parent;
-	pmu->dev->release = pmu_dev_release;
+	dev->parent = pmu->parent;
+	dev_set_drvdata(dev, pmu);
+	dev->bus = &pmu_bus;
+	dev->release = pmu_dev_release;
 
-	ret = dev_set_name(pmu->dev, "%s", pmu->name);
+	ret = dev_set_name(dev, "%s", pmu->name);
 	if (ret)
-		goto free_dev;
+		return ret;
 
-	ret = device_add(pmu->dev);
+	ret = device_add(dev);
 	if (ret)
-		goto free_dev;
+		return ret;
+
+	struct device *del __free(device_del) = dev;
 
 	if (pmu->attr_update) {
-		ret = sysfs_update_groups(&pmu->dev->kobj, pmu->attr_update);
+		ret = sysfs_update_groups(&dev->kobj, pmu->attr_update);
 		if (ret)
-			goto del_dev;
+			return ret;
 	}
 
-out:
-	return ret;
-
-del_dev:
-	device_del(pmu->dev);
-
-free_dev:
-	put_device(pmu->dev);
-	goto out;
+	dev = no_free_ptr(del);
+	pmu->dev = no_free_ptr(dev);
+	return 0;
 }
 
 static struct lock_class_key cpuctx_mutex;
