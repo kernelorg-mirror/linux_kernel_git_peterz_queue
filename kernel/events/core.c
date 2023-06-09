@@ -2421,7 +2421,7 @@ static void __perf_event_disable(struct perf_event *event,
 		update_cgrp_time_from_event(event);
 	}
 
-	perf_pmu_disable(event->pmu_ctx->pmu);
+	guard(perf_pmu_disable)(event->pmu_ctx->pmu);
 
 	if (event == event->group_leader)
 		group_sched_out(event, ctx);
@@ -2430,8 +2430,6 @@ static void __perf_event_disable(struct perf_event *event,
 
 	perf_event_set_state(event, PERF_EVENT_STATE_OFF);
 	perf_cgroup_event_disable(event, ctx);
-
-	perf_pmu_enable(event->pmu_ctx->pmu);
 }
 
 /*
@@ -2452,12 +2450,10 @@ static void _perf_event_disable(struct perf_event *event)
 {
 	struct perf_event_context *ctx = event->ctx;
 
-	raw_spin_lock_irq(&ctx->lock);
-	if (event->state <= PERF_EVENT_STATE_OFF) {
-		raw_spin_unlock_irq(&ctx->lock);
-		return;
+	scoped_guard (raw_spinlock_irq, &ctx->lock) {
+		if (event->state <= PERF_EVENT_STATE_OFF)
+			return;
 	}
-	raw_spin_unlock_irq(&ctx->lock);
 
 	event_function_call(event, __perf_event_disable, NULL);
 }
@@ -2958,32 +2954,29 @@ static void _perf_event_enable(struct perf_event *event)
 {
 	struct perf_event_context *ctx = event->ctx;
 
-	raw_spin_lock_irq(&ctx->lock);
-	if (event->state >= PERF_EVENT_STATE_INACTIVE ||
-	    event->state <  PERF_EVENT_STATE_ERROR) {
-out:
-		raw_spin_unlock_irq(&ctx->lock);
-		return;
-	}
+	scoped_guard (raw_spinlock_irq, &ctx->lock) {
+		if (event->state >= PERF_EVENT_STATE_INACTIVE ||
+		    event->state <  PERF_EVENT_STATE_ERROR)
+			return;
 
-	/*
-	 * If the event is in error state, clear that first.
-	 *
-	 * That way, if we see the event in error state below, we know that it
-	 * has gone back into error state, as distinct from the task having
-	 * been scheduled away before the cross-call arrived.
-	 */
-	if (event->state == PERF_EVENT_STATE_ERROR) {
 		/*
-		 * Detached SIBLING events cannot leave ERROR state.
+		 * If the event is in error state, clear that first.
+		 *
+		 * That way, if we see the event in error state below, we know that it
+		 * has gone back into error state, as distinct from the task having
+		 * been scheduled away before the cross-call arrived.
 		 */
-		if (event->event_caps & PERF_EV_CAP_SIBLING &&
-		    event->group_leader == event)
-			goto out;
+		if (event->state == PERF_EVENT_STATE_ERROR) {
+			/*
+			 * Detached SIBLING events cannot leave ERROR state.
+			 */
+			if (event->event_caps & PERF_EV_CAP_SIBLING &&
+			    event->group_leader == event)
+				return;
 
-		event->state = PERF_EVENT_STATE_OFF;
+			event->state = PERF_EVENT_STATE_OFF;
+		}
 	}
-	raw_spin_unlock_irq(&ctx->lock);
 
 	event_function_call(event, __perf_event_enable, NULL);
 }
