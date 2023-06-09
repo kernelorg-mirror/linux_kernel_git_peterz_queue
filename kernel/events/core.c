@@ -1454,6 +1454,10 @@ static void perf_unpin_context(struct perf_event_context *ctx)
 	raw_spin_unlock_irqrestore(&ctx->lock, flags);
 }
 
+DEFINE_CLASS(pin_task_ctx, struct perf_event_context *,
+	     if (_T) { perf_unpin_context(_T); put_ctx(_T); },
+	     perf_pin_task_context(task), struct task_struct *task)
+
 /*
  * Update the record of the current time in a context.
  */
@@ -7965,18 +7969,13 @@ static void perf_event_addr_filters_exec(struct perf_event *event, void *data)
 
 void perf_event_exec(void)
 {
-	struct perf_event_context *ctx;
-
-	ctx = perf_pin_task_context(current);
+	CLASS(pin_task_ctx, ctx)(current);
 	if (!ctx)
 		return;
 
 	perf_event_enable_on_exec(ctx);
 	perf_event_remove_on_exec(ctx);
 	perf_iterate_ctx(ctx, perf_event_addr_filters_exec, NULL, true);
-
-	perf_unpin_context(ctx);
-	put_ctx(ctx);
 }
 
 struct remote_output {
@@ -13273,8 +13272,7 @@ inherit_task_group(struct perf_event *event, struct task_struct *parent,
  */
 static int perf_event_init_context(struct task_struct *child, u64 clone_flags)
 {
-	struct perf_event_context *child_ctx, *parent_ctx;
-	struct perf_event_context *cloned_ctx;
+	struct perf_event_context *child_ctx, *cloned_ctx;
 	struct perf_event *event;
 	struct task_struct *parent = current;
 	int inherited_all = 1;
@@ -13288,7 +13286,7 @@ static int perf_event_init_context(struct task_struct *child, u64 clone_flags)
 	 * If the parent's context is a clone, pin it so it won't get
 	 * swapped under us.
 	 */
-	parent_ctx = perf_pin_task_context(parent);
+	CLASS(pin_task_ctx, parent_ctx)(parent);
 	if (!parent_ctx)
 		return 0;
 
@@ -13303,7 +13301,7 @@ static int perf_event_init_context(struct task_struct *child, u64 clone_flags)
 	 * Lock the parent list. No need to lock the child - not PID
 	 * hashed yet and not running, so nobody can access it.
 	 */
-	mutex_lock(&parent_ctx->mutex);
+	guard(mutex)(&parent_ctx->mutex);
 
 	/*
 	 * We dont have to disable NMIs - we are only looking at
@@ -13313,7 +13311,7 @@ static int perf_event_init_context(struct task_struct *child, u64 clone_flags)
 		ret = inherit_task_group(event, parent, parent_ctx,
 					 child, clone_flags, &inherited_all);
 		if (ret)
-			goto out_unlock;
+			return ret;
 	}
 
 	/*
@@ -13329,7 +13327,7 @@ static int perf_event_init_context(struct task_struct *child, u64 clone_flags)
 		ret = inherit_task_group(event, parent, parent_ctx,
 					 child, clone_flags, &inherited_all);
 		if (ret)
-			goto out_unlock;
+			return ret;
 	}
 
 	raw_spin_lock_irqsave(&parent_ctx->lock, flags);
@@ -13357,13 +13355,8 @@ static int perf_event_init_context(struct task_struct *child, u64 clone_flags)
 	}
 
 	raw_spin_unlock_irqrestore(&parent_ctx->lock, flags);
-out_unlock:
-	mutex_unlock(&parent_ctx->mutex);
 
-	perf_unpin_context(parent_ctx);
-	put_ctx(parent_ctx);
-
-	return ret;
+	return 0;
 }
 
 /*
