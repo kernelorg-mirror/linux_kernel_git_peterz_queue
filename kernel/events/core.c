@@ -7781,22 +7781,17 @@ __perf_event_output(struct perf_event *event,
 	int err;
 
 	/* protect the callchain buffers */
-	rcu_read_lock();
+	guard(rcu)();
 
 	perf_prepare_sample(data, event, regs);
 	perf_prepare_header(&header, data, event, regs);
-
 	err = output_begin(&handle, data, event, header.size);
 	if (err)
-		goto exit;
-
+		return err;
 	perf_output_sample(&handle, &header, data, event);
-
 	perf_output_end(&handle);
 
-exit:
-	rcu_read_unlock();
-	return err;
+	return 0;
 }
 
 void
