@@ -4097,7 +4097,7 @@ perf_adjust_freq_unthr_context(struct perf_event_context *ctx, bool unthrottle)
 	if (!(ctx->nr_freq || unthrottle))
 		return;
 
-	raw_spin_lock(&ctx->lock);
+	guard(raw_spinlock)(&ctx->lock);
 
 	list_for_each_entry_rcu(event, &ctx->event_list, event_entry) {
 		if (event->state != PERF_EVENT_STATE_ACTIVE)
@@ -4107,7 +4107,7 @@ perf_adjust_freq_unthr_context(struct perf_event_context *ctx, bool unthrottle)
 		if (!event_filter_match(event))
 			continue;
 
-		perf_pmu_disable(event->pmu);
+		guard(perf_pmu_disable)(event->pmu);
 
 		hwc = &event->hw;
 
@@ -4117,34 +4117,29 @@ perf_adjust_freq_unthr_context(struct perf_event_context *ctx, bool unthrottle)
 			event->pmu->start(event, 0);
 		}
 
-		if (!event->attr.freq || !event->attr.sample_freq)
-			goto next;
+		if (event->attr.freq && event->attr.sample_freq) {
+			/*
+			 * stop the event and update event->count
+			 */
+			event->pmu->stop(event, PERF_EF_UPDATE);
 
-		/*
-		 * stop the event and update event->count
-		 */
-		event->pmu->stop(event, PERF_EF_UPDATE);
+			now = local64_read(&event->count);
+			delta = now - hwc->freq_count_stamp;
+			hwc->freq_count_stamp = now;
 
-		now = local64_read(&event->count);
-		delta = now - hwc->freq_count_stamp;
-		hwc->freq_count_stamp = now;
+			/*
+			 * restart the event
+			 * reload only if value has changed
+			 * we have stopped the event so tell that
+			 * to perf_adjust_period() to avoid stopping it
+			 * twice.
+			 */
+			if (delta > 0)
+				perf_adjust_period(event, period, delta, false);
 
-		/*
-		 * restart the event
-		 * reload only if value has changed
-		 * we have stopped the event so tell that
-		 * to perf_adjust_period() to avoid stopping it
-		 * twice.
-		 */
-		if (delta > 0)
-			perf_adjust_period(event, period, delta, false);
-
-		event->pmu->start(event, delta > 0 ? PERF_EF_RELOAD : 0);
-	next:
-		perf_pmu_enable(event->pmu);
+			event->pmu->start(event, delta > 0 ? PERF_EF_RELOAD : 0);
+		}
 	}
-
-	raw_spin_unlock(&ctx->lock);
 }
 
 /*
