@@ -10331,16 +10331,14 @@ static void bpf_overflow_handler(struct perf_event *event,
 	int ret = 0;
 
 	ctx.regs = perf_arch_bpf_user_pt_regs(regs);
-	if (unlikely(__this_cpu_inc_return(bpf_prog_active) != 1))
-		goto out;
-	rcu_read_lock();
-	prog = READ_ONCE(event->prog);
-	if (prog) {
-		perf_prepare_sample(data, event, regs);
-		ret = bpf_prog_run(prog, &ctx);
+	if (likely(__this_cpu_inc_return(bpf_prog_active) == 1)) {
+		guard(rcu)();
+		prog = READ_ONCE(event->prog);
+		if (prog) {
+			perf_prepare_sample(data, event, regs);
+			ret = bpf_prog_run(prog, &ctx);
+		}
 	}
-	rcu_read_unlock();
-out:
 	__this_cpu_dec(bpf_prog_active);
 	if (!ret)
 		return;
