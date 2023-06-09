@@ -11402,22 +11402,23 @@ static void perf_pmu_free(struct pmu *pmu)
 	free_pmu_context(pmu);
 }
 
-int perf_pmu_register(struct pmu *pmu, const char *name, int type)
+DEFINE_FREE(pmu_unregister, struct pmu *, if (_T) perf_pmu_free(_T))
+
+int perf_pmu_register(struct pmu *_pmu, const char *name, int type)
 {
 	int cpu, ret, max = PERF_TYPE_MAX;
 
-	pmu->type = -1;
+	_pmu->type = -1;
 
-	mutex_lock(&pmus_lock);
-	ret = -ENOMEM;
+	guard(mutex)(&pmus_lock);
+	struct pmu *pmu __free(pmu_unregister) = _pmu;
+
 	pmu->pmu_disable_count = alloc_percpu(int);
 	if (!pmu->pmu_disable_count)
-		goto unlock;
+		return -ENOMEM;
 
-	if (WARN_ONCE(!name, "Can not register anonymous pmu.\n")) {
-		ret = -EINVAL;
-		goto free;
-	}
+	if (WARN_ONCE(!name, "Can not register anonymous pmu.\n"))
+		return -EINVAL;
 
 	pmu->name = name;
 
@@ -11426,7 +11427,7 @@ int perf_pmu_register(struct pmu *pmu, const char *name, int type)
 
 	ret = idr_alloc(&pmu_idr, pmu, max, 0, GFP_KERNEL);
 	if (ret < 0)
-		goto free;
+		return ret;
 
 	WARN_ON(type >= 0 && ret != type);
 
@@ -11435,13 +11436,12 @@ int perf_pmu_register(struct pmu *pmu, const char *name, int type)
 	if (pmu_bus_running && !pmu->dev) {
 		ret = pmu_dev_alloc(pmu);
 		if (ret)
-			goto free;
+			return ret;
 	}
 
-	ret = -ENOMEM;
 	pmu->cpu_pmu_context = alloc_percpu(struct perf_cpu_pmu_context);
 	if (!pmu->cpu_pmu_context)
-		goto free;
+		return -ENOMEM;
 
 	for_each_possible_cpu(cpu) {
 		struct perf_cpu_pmu_context *cpc;
@@ -11481,21 +11481,14 @@ int perf_pmu_register(struct pmu *pmu, const char *name, int type)
 
 	list_add_rcu(&pmu->entry, &pmus);
 	atomic_set(&pmu->exclusive_cnt, 0);
-	ret = 0;
-unlock:
-	mutex_unlock(&pmus_lock);
-
-	return ret;
-
-free:
-	perf_pmu_free(pmu);
-	goto unlock;
+	_pmu = no_free_ptr(pmu); // let it rip
+	return 0;
 }
 EXPORT_SYMBOL_GPL(perf_pmu_register);
 
 void perf_pmu_unregister(struct pmu *pmu)
 {
-	mutex_lock(&pmus_lock);
+	guard(mutex)(&pmus_lock);
 	list_del_rcu(&pmu->entry);
 
 	/*
@@ -11506,7 +11499,6 @@ void perf_pmu_unregister(struct pmu *pmu)
 	synchronize_rcu();
 
 	perf_pmu_free(pmu);
-	mutex_unlock(&pmus_lock);
 }
 EXPORT_SYMBOL_GPL(perf_pmu_unregister);
 
