@@ -1206,6 +1206,8 @@ static void put_ctx(struct perf_event_context *ctx)
 	}
 }
 
+DEFINE_FREE(put_ctx, struct perf_event_context *, if (_T) put_ctx(_T))
+
 /*
  * Because of perf_event::ctx migration in sys_perf_event_open::move_group and
  * perf_pmu_migrate_context() we need some magic.
@@ -4723,41 +4725,29 @@ retry:
 		if (clone_ctx)
 			put_ctx(clone_ctx);
 	} else {
-		ctx = alloc_perf_context(task);
-		err = -ENOMEM;
-		if (!ctx)
-			goto errout;
+		struct perf_event_context *new __free(put_ctx) =
+			alloc_perf_context(task);
+		if (!new)
+			return ERR_PTR(-ENOMEM);
 
-		err = 0;
-		mutex_lock(&task->perf_event_mutex);
-		/*
-		 * If it has already passed perf_event_exit_task().
-		 * we must see PF_EXITING, it takes this mutex too.
-		 */
-		if (task->flags & PF_EXITING)
-			err = -ESRCH;
-		else if (task->perf_event_ctxp)
-			err = -EAGAIN;
-		else {
-			get_ctx(ctx);
+		scoped_guard (mutex, &task->perf_event_mutex) {
+			/*
+			 * If it has already passed perf_event_exit_task().
+			 * we must see PF_EXITING, it takes this mutex too.
+			 */
+			if (task->flags & PF_EXITING)
+				return ERR_PTR(-ESRCH);
+
+			if (task->perf_event_ctxp)
+				goto retry;
+
+			ctx = get_ctx(no_free_ptr(new));
 			++ctx->pin_count;
 			rcu_assign_pointer(task->perf_event_ctxp, ctx);
-		}
-		mutex_unlock(&task->perf_event_mutex);
-
-		if (unlikely(err)) {
-			put_ctx(ctx);
-
-			if (err == -EAGAIN)
-				goto retry;
-			goto errout;
 		}
 	}
 
 	return ctx;
-
-errout:
-	return ERR_PTR(err);
 }
 
 DEFINE_CLASS(find_get_ctx, struct perf_event_context *,
