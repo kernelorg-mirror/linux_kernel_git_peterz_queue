@@ -1278,13 +1278,11 @@ perf_event_ctx_lock_nested(struct perf_event *event, int nesting)
 	struct perf_event_context *ctx;
 
 again:
-	rcu_read_lock();
-	ctx = READ_ONCE(event->ctx);
-	if (!refcount_inc_not_zero(&ctx->refcount)) {
-		rcu_read_unlock();
-		goto again;
+	scoped_guard (rcu) {
+		ctx = READ_ONCE(event->ctx);
+		if (!refcount_inc_not_zero(&ctx->refcount))
+			goto again;
 	}
-	rcu_read_unlock();
 
 	mutex_lock_nested(&ctx->mutex, nesting);
 	if (event->ctx != ctx) {
@@ -2260,7 +2258,7 @@ event_sched_out(struct perf_event *event, struct perf_event_context *ctx)
 	 */
 	list_del_init(&event->active_list);
 
-	perf_pmu_disable(event->pmu);
+	guard(perf_pmu_disable)(event->pmu);
 
 	event->pmu->del(event, 0);
 	event->oncpu = -1;
@@ -2294,8 +2292,6 @@ event_sched_out(struct perf_event *event, struct perf_event_context *ctx)
 		ctx->nr_freq--;
 	if (event->attr.exclusive || !cpc->active_oncpu)
 		cpc->exclusive = 0;
-
-	perf_pmu_enable(event->pmu);
 }
 
 static void
@@ -3222,7 +3218,8 @@ static void __pmu_ctx_sched_out(struct perf_event_pmu_context *pmu_ctx,
 	if (!event_type)
 		return;
 
-	perf_pmu_disable(pmu);
+	guard(perf_pmu_disable)(pmu);
+
 	if (event_type & EVENT_PINNED) {
 		list_for_each_entry_safe(event, tmp,
 					 &pmu_ctx->pinned_active,
@@ -3242,7 +3239,6 @@ static void __pmu_ctx_sched_out(struct perf_event_pmu_context *pmu_ctx,
 		 */
 		pmu_ctx->rotate_necessary = 0;
 	}
-	perf_pmu_enable(pmu);
 }
 
 static void
@@ -3595,13 +3591,10 @@ static void __perf_pmu_sched_task(struct perf_cpu_pmu_context *cpc, bool sched_i
 	if (WARN_ON_ONCE(!pmu->sched_task))
 		return;
 
-	perf_ctx_lock(cpuctx, cpuctx->task_ctx);
-	perf_pmu_disable(pmu);
+	guard(perf_ctx_lock)(cpuctx, cpuctx->task_ctx);
+	guard(perf_pmu_disable)(pmu);
 
 	pmu->sched_task(cpc->task_epc, sched_in);
-
-	perf_pmu_enable(pmu);
-	perf_ctx_unlock(cpuctx, cpuctx->task_ctx);
 }
 
 static void perf_pmu_sched_task(struct task_struct *prev,
@@ -12699,14 +12692,11 @@ static void __perf_pmu_install_event(struct pmu *pmu,
 				     struct perf_event_context *ctx,
 				     int cpu, struct perf_event *event)
 {
-	struct perf_event_pmu_context *epc;
 	struct perf_event_context *old_ctx = event->ctx;
-
 	get_ctx(ctx); /* normally find_get_context() */
 
 	event->cpu = cpu;
-	epc = find_get_pmu_context(pmu, ctx, event);
-	event->pmu_ctx = epc;
+	event->pmu_ctx = find_get_pmu_context(pmu, ctx, event);
 
 	if (event->state >= PERF_EVENT_STATE_OFF)
 		event->state = PERF_EVENT_STATE_INACTIVE;
@@ -12860,12 +12850,12 @@ perf_event_exit_event(struct perf_event *event, struct perf_event_context *ctx)
 
 static void perf_event_exit_task_context(struct task_struct *child)
 {
-	struct perf_event_context *child_ctx, *clone_ctx = NULL;
+	struct perf_event_context *clone_ctx = NULL;
 	struct perf_event *child_event, *next;
 
 	WARN_ON_ONCE(child != current);
 
-	child_ctx = perf_pin_task_context(child);
+	CLASS(pin_task_ctx, child_ctx)(child);
 	if (!child_ctx)
 		return;
 
@@ -12879,27 +12869,27 @@ static void perf_event_exit_task_context(struct task_struct *child)
 	 * without ctx::mutex (it cannot because of the move_group double mutex
 	 * lock thing). See the comments in perf_install_in_context().
 	 */
-	mutex_lock(&child_ctx->mutex);
+	guard(mutex)(&child_ctx->mutex);
 
 	/*
 	 * In a single ctx::lock section, de-schedule the events and detach the
 	 * context from the task such that we cannot ever get it scheduled back
 	 * in.
 	 */
-	raw_spin_lock_irq(&child_ctx->lock);
-	task_ctx_sched_out(child_ctx, EVENT_ALL);
+	scoped_guard (raw_spinlock_irq, &child_ctx->lock) {
+		task_ctx_sched_out(child_ctx, EVENT_ALL);
 
-	/*
-	 * Now that the context is inactive, destroy the task <-> ctx relation
-	 * and mark the context dead.
-	 */
-	RCU_INIT_POINTER(child->perf_event_ctxp, NULL);
-	put_ctx(child_ctx); /* cannot be last */
-	WRITE_ONCE(child_ctx->task, TASK_TOMBSTONE);
-	put_task_struct(current); /* cannot be last */
+		/*
+		 * Now that the context is inactive, destroy the task <-> ctx
+		 * relation and mark the context dead.
+		 */
+		RCU_INIT_POINTER(child->perf_event_ctxp, NULL);
+		put_ctx(child_ctx); /* cannot be last */
+		WRITE_ONCE(child_ctx->task, TASK_TOMBSTONE);
+		put_task_struct(current); /* cannot be last */
 
-	clone_ctx = unclone_ctx(child_ctx);
-	raw_spin_unlock_irq(&child_ctx->lock);
+		clone_ctx = unclone_ctx(child_ctx);
+	}
 
 	if (clone_ctx)
 		put_ctx(clone_ctx);
@@ -12913,10 +12903,6 @@ static void perf_event_exit_task_context(struct task_struct *child)
 
 	list_for_each_entry_safe(child_event, next, &child_ctx->event_list, event_entry)
 		perf_event_exit_event(child_event, child_ctx);
-
-	mutex_unlock(&child_ctx->mutex);
-
-	put_ctx(child_ctx);
 }
 
 /*
