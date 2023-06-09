@@ -5506,39 +5506,31 @@ static int perf_read_group(struct perf_event *event,
 	struct perf_event *leader = event->group_leader, *child;
 	struct perf_event_context *ctx = leader->ctx;
 	int ret;
-	u64 *values;
 
 	lockdep_assert_held(&ctx->mutex);
 
-	values = kzalloc(event->read_size, GFP_KERNEL);
+	u64 *values __free(kfree) = kzalloc(event->read_size, GFP_KERNEL);
 	if (!values)
 		return -ENOMEM;
 
 	values[0] = 1 + leader->nr_siblings;
 
-	mutex_lock(&leader->child_mutex);
-
-	ret = __perf_read_group_add(leader, read_format, values);
-	if (ret)
-		goto unlock;
-
-	list_for_each_entry(child, &leader->child_list, child_list) {
-		ret = __perf_read_group_add(child, read_format, values);
+	scoped_guard (mutex, &leader->child_mutex) {
+		ret = __perf_read_group_add(leader, read_format, values);
 		if (ret)
-			goto unlock;
-	}
+			return ret;
 
-	mutex_unlock(&leader->child_mutex);
+		list_for_each_entry(child, &leader->child_list, child_list) {
+			ret = __perf_read_group_add(child, read_format, values);
+			if (ret)
+				return ret;
+		}
+	}
 
 	ret = event->read_size;
 	if (copy_to_user(buf, values, event->read_size))
-		ret = -EFAULT;
-	goto out;
+		return -EFAULT;
 
-unlock:
-	mutex_unlock(&leader->child_mutex);
-out:
-	kfree(values);
 	return ret;
 }
 
