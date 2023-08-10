@@ -6,6 +6,7 @@ x86/alternatives
 x86/apic
 x86/asm
 x86/boot
+x86/bugs
 x86/build
 x86/cache
 x86/cc
