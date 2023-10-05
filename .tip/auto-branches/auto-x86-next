@@ -26,6 +26,7 @@ x86/mm
 x86/mtrr
 x86/paravirt
 x86/pasid
+x86/percpu
 x86/platform
 x86/sev
 x86/sgx
