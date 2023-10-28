@@ -16,6 +16,7 @@ x86/cpu
 x86/entry
 x86/fpu
 x86/fsgsbase
+x86/headers
 x86/hyperv
 x86/irq
 x86/kaslr
