@@ -1,6 +1,10 @@
 # x86 branches for integration
 
+# Pending fixes for upstream:
 x86/urgent
+
+# Continuous integration merge-helper branch, do not send upstream:
+x86/merge
 
 x86/alternatives
 x86/apic
@@ -33,8 +37,7 @@ x86/sev
 x86/sgx
 x86/shstk
 x86/splitlock
-x86/timers
 x86/tdx
+x86/timers
 x86/vdso
 x86/vmware
-x86/merge
