@@ -2373,6 +2373,50 @@ static int read_unwind_hints(struct objtool_file *file)
 	return 0;
 }
 
+static int read_annotate(struct objtool_file *file, void (*func)(int type, struct instruction *insn))
+{
+	struct section *rsec, *sec;
+	struct instruction *insn;
+	struct reloc *reloc;
+	int type;
+
+	rsec = find_section_by_name(file->elf, ".rela.discard.annotate");
+	if (!rsec)
+		return 0;
+
+	sec = find_section_by_name(file->elf, ".discard.annotate");
+	if (!sec)
+		return 0;
+
+	if (sec->sh.sh_entsize != 8) {
+		static bool warn = false;
+		if (!warn) {
+			WARN("%s: dodgy linker, sh_entsize != 8", sec->name);
+			warn = true;
+		}
+		sec->sh.sh_entsize = 8;
+	}
+
+	for_each_reloc(rsec, reloc) {
+		insn = find_insn(file, reloc->sym->sec,
+				 reloc->sym->offset + reloc_addend(reloc));
+		if (!insn) {
+			WARN("bad .discard.annotate entry: %d", reloc_idx(reloc));
+			return -1;
+		}
+
+		type = *(u32 *)(sec->data->d_buf + (reloc_idx(reloc) * sec->sh.sh_entsize) + 4);
+
+		func(type, insn);
+	}
+
+	return 0;
+}
+
+static void __annotate_nop(int type, struct instruction *insn)
+{
+}
+
 static int read_noendbr_hints(struct objtool_file *file)
 {
 	struct instruction *insn;
@@ -2669,6 +2713,8 @@ static int decode_sections(struct objtool_file *file)
 	ret = add_ignore_alternatives(file);
 	if (ret)
 		return ret;
+
+	ret = read_annotate(file, __annotate_nop);
 
 	/*
 	 * Must be before read_unwind_hints() since that needs insn->noendbr.
