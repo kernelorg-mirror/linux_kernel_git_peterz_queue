@@ -51,12 +51,15 @@
 	".long 998b\n\t"						\
 	".popsection\n\t"
 
-#define ASM_ANNOTATE(x)						\
-	"911:\n\t"						\
+#define __ASM_ANNOTATE(s, x)					\
 	".pushsection .discard.annotate,\"M\",@progbits,8\n\t"	\
-	".long 911b - .\n\t"					\
+	".long " __stringify(s) "b - .\n\t"			\
 	".long " __stringify(x) "\n\t"				\
 	".popsection\n\t"
+
+#define ASM_ANNOTATE(x)						\
+	"911:\n\t"						\
+	__ASM_ANNOTATE(911, x)
 
 #define ANNOTATE_NOENDBR	ASM_ANNOTATE(ANNOTYPE_NOENDBR)
 
