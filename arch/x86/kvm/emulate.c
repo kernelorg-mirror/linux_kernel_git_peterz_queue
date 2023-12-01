@@ -285,8 +285,8 @@ static void invalidate_registers(struct x86_emulate_ctxt *ctxt)
  * different operand sizes can be reached by calculation, rather than a jump
  * table (which would be bigger than the code).
  *
- * The 16 byte alignment, considering 5 bytes for the RET thunk, 3 for ENDBR
- * and 1 for the straight line speculation INT3, leaves 7 bytes for the
+ * The 16 byte alignment, considering 5 bytes for the JMP, 4 for ENDBR
+ * and 1 for the straight line speculation INT3, leaves 6 bytes for the
  * body of the function.  Currently none is larger than 4.
  */
 static int fastop(struct x86_emulate_ctxt *ctxt, fastop_t fop);
@@ -304,7 +304,7 @@ static int fastop(struct x86_emulate_ctxt *ctxt, fastop_t fop);
 	__FOP_FUNC(#name)
 
 #define __FOP_RET(name) \
-	"11: " ASM_RET \
+	"11: jmp fastop_return; int3 \n\t" \
 	".size " name ", .-" name "\n\t"
 
 #define FOP_RET(name) \
@@ -5038,14 +5038,24 @@ static void fetch_possible_mmx_operand(struct operand *op)
 		kvm_read_mmx_reg(op->addr.mm, &op->mm_val);
 }
 
-static int fastop(struct x86_emulate_ctxt *ctxt, fastop_t fop)
+/*
+ * All the FASTOP magic above relies on there being *one* instance of this
+ * so it can JMP back, avoiding RET and it's various thunks.
+ */
+static noinline int fastop(struct x86_emulate_ctxt *ctxt, fastop_t fop)
 {
 	ulong flags = (ctxt->eflags & EFLAGS_MASK) | X86_EFLAGS_IF;
 
 	if (!(ctxt->d & ByteOp))
 		fop += __ffs(ctxt->dst.bytes) * FASTOP_SIZE;
 
-	asm("push %[flags]; popf; " CALL_NOSPEC " ; pushf; pop %[flags]\n"
+	asm("push %[flags]; popf \n\t"
+	    UNWIND_HINT(UNWIND_HINT_TYPE_SAVE, 0, 0, 0)
+	    ASM_ANNOTATE(ANNOTYPE_JUMP_TABLE)
+	    JMP_NOSPEC
+	    "fastop_return: \n\t"
+	    UNWIND_HINT(UNWIND_HINT_TYPE_RESTORE, 0, 0, 0)
+	    "pushf; pop %[flags]\n"
 	    : "+a"(ctxt->dst.val), "+d"(ctxt->src.val), [flags]"+D"(flags),
 	      [thunk_target]"+S"(fop), ASM_CALL_CONSTRAINT
 	    : "c"(ctxt->src2.val));

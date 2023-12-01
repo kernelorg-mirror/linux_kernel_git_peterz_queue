@@ -2460,6 +2460,14 @@ static int __annotate_late(struct objtool_file *file, int type, struct instructi
 		insn->unret = 1;
 		break;
 
+	/*
+	 * Must be after add_jump_table(); for it doesn't set a sane
+	 * _jump_table value.
+	 */
+	case ANNOTYPE_JUMP_TABLE:
+		insn->_jump_table = (void *)1;
+		break;
+
 	default:
 		break;
 	}
@@ -3553,7 +3561,8 @@ static int validate_branch(struct objtool_file *file, struct symbol *func,
 		if (func && insn_func(insn) && func != insn_func(insn)->pfunc) {
 			/* Ignore KCFI type preambles, which always fall through */
 			if (!strncmp(func->name, "__cfi_", 6) ||
-			    !strncmp(func->name, "__pfx_", 6))
+			    !strncmp(func->name, "__pfx_", 6) ||
+			    !strcmp(insn_func(insn)->name, "fastop"))
 				return 0;
 
 			WARN("%s() falls through to next function %s()",
