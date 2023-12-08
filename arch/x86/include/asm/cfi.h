@@ -8,6 +8,7 @@
  * Copyright (C) 2022 Google LLC
  */
 #include <linux/bug.h>
+#include <asm/ibt.h>
 
 /*
  * An overview of the various calling conventions...
@@ -137,5 +138,7 @@ static inline u32 cfi_get_func_hash(void *func)
 	return 0;
 }
 #endif /* CONFIG_CFI_CLANG */
+
+#define CFI_NOSEAL(x)	asm(IBT_NOSEAL(__stringify(x)))
 
 #endif /* _ASM_X86_CFI_H */
