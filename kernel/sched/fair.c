@@ -5529,6 +5529,8 @@ pick_next_entity(struct rq *rq, struct cfs_rq *cfs_rq)
 		dequeue_entities(rq, se, DEQUEUE_SLEEP | DEQUEUE_DELAYED);
 		SCHED_WARN_ON(se->sched_delayed);
 		SCHED_WARN_ON(se->on_rq);
+		if (sched_feat(DELAY_ZERO) && se->vlag > 0)
+			se->vlag = 0;
 
 		return NULL;
 	}
@@ -6825,6 +6827,20 @@ requeue_delayed_entity(struct sched_entity *se)
 	SCHED_WARN_ON(!se->sched_delayed);
 	SCHED_WARN_ON(!se->on_rq);
 	SCHED_WARN_ON(entity_is_task(se) && cfs_rq->curr == se);
+
+	if (sched_feat(DELAY_ZERO)) {
+		update_entity_lag(cfs_rq, se);
+		if (se->vlag > 0) {
+			cfs_rq->nr_running--;
+			if (se != cfs_rq->curr)
+				__dequeue_entity(cfs_rq, se);
+			se->vlag = 0;
+			place_entity(cfs_rq, se, 0);
+			if (se != cfs_rq->curr)
+				__enqueue_entity(cfs_rq, se);
+			cfs_rq->nr_running++;
+		}
+	}
 
 	se->sched_delayed = 0;
 }
