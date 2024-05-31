@@ -5270,6 +5270,12 @@ place_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int flags)
 
 	se->vruntime = vruntime - lag;
 
+	if (sched_feat(PLACE_REL_DEADLINE) && se->rel_deadline) {
+		se->deadline += se->vruntime;
+		se->rel_deadline = 0;
+		return;
+	}
+
 	/*
 	 * When joining the competition; the existing tasks will be,
 	 * on average, halfway through their slice, as such start tasks
@@ -5382,6 +5388,8 @@ static __always_inline void return_cfs_rq_runtime(struct cfs_rq *cfs_rq);
 static bool
 dequeue_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int flags)
 {
+	bool sleep = flags & DEQUEUE_SLEEP;
+
 	if (flags & DEQUEUE_DELAYED) {
 		/*
 		 * DEQUEUE_DELAYED is typically called from pick_next_entity()
@@ -5391,19 +5399,18 @@ dequeue_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int flags)
 		SCHED_WARN_ON(!se->sched_delayed);
 		se->sched_delayed = 0;
 	} else {
-		bool sleep = flags & DEQUEUE_SLEEP;
-
+		bool delay = sleep;
 		/*
 		 * DELAY_DEQUEUE relies on spurious wakeups, special task
 		 * states must not suffer spurious wakeups, excempt them.
 		 */
 		if (flags & DEQUEUE_SPECIAL)
-			sleep = false;
+			delay = false;
 
-		SCHED_WARN_ON(sleep && se->sched_delayed);
+		SCHED_WARN_ON(delay && se->sched_delayed);
 		update_curr(cfs_rq);
 
-		if (sched_feat(DELAY_DEQUEUE) && sleep &&
+		if (sched_feat(DELAY_DEQUEUE) && delay &&
 		    !entity_eligible(cfs_rq, se)) {
 			if (cfs_rq->next == se)
 				cfs_rq->next = NULL;
@@ -5434,6 +5441,11 @@ dequeue_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int flags)
 	clear_buddies(cfs_rq, se);
 
 	update_entity_lag(cfs_rq, se);
+	if (sched_feat(PLACE_REL_DEADLINE) && !sleep) {
+		se->deadline -= se->vruntime;
+		se->rel_deadline = 1;
+	}
+
 	if (se != cfs_rq->curr)
 		__dequeue_entity(cfs_rq, se);
 	se->on_rq = 0;
@@ -13020,6 +13032,7 @@ static void switched_from_fair(struct rq *rq, struct task_struct *p)
 	 * over the excursion into the new class.
 	 */
 	p->se.vlag = 0;
+	p->se.rel_deadline = 0;
 }
 
 static void switched_to_fair(struct rq *rq, struct task_struct *p)
