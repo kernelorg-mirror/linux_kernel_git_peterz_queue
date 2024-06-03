@@ -1134,14 +1134,18 @@ static void update_tg_load_avg(struct cfs_rq *cfs_rq)
 static s64 update_curr_se(struct rq *rq, struct sched_entity *curr)
 {
 	u64 now = rq_clock_task(rq);
-	s64 delta_exec;
+	s64 delta_exec, delta_dvfs;
 
-	delta_exec = now - curr->exec_start;
+	delta_dvfs = delta_exec = now - curr->exec_start;
 	if (unlikely(delta_exec <= 0))
 		return delta_exec;
 
 	curr->exec_start = now;
 	curr->sum_exec_runtime += delta_exec;
+
+	delta_dvfs = cap_scale(delta_dvfs, arch_scale_freq_capacity(cpu_of(rq)));
+	delta_dvfs = cap_scale(delta_dvfs, arch_scale_cpu_capacity(cpu_of(rq)));
+	curr->sum_dvfs_runtime += delta_dvfs;
 
 	if (schedstat_enabled()) {
 		struct sched_statistics *stats;

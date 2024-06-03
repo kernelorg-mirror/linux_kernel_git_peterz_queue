@@ -1516,6 +1516,7 @@ static const struct k_clock * const posix_clocks[] = {
 	[CLOCK_MONOTONIC]		= &clock_monotonic,
 	[CLOCK_PROCESS_CPUTIME_ID]	= &clock_process,
 	[CLOCK_THREAD_CPUTIME_ID]	= &clock_thread,
+	[CLOCK_THREAD_DVFS_ID]		= &clock_thread_dvfs,
 	[CLOCK_MONOTONIC_RAW]		= &clock_monotonic_raw,
 	[CLOCK_REALTIME_COARSE]		= &clock_realtime_coarse,
 	[CLOCK_MONOTONIC_COARSE]	= &clock_monotonic_coarse,
