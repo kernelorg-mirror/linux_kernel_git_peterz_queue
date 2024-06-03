@@ -34,6 +34,7 @@ extern const struct k_clock clock_posix_cpu;
 extern const struct k_clock clock_posix_dynamic;
 extern const struct k_clock clock_process;
 extern const struct k_clock clock_thread;
+extern const struct k_clock clock_thread_dvfs;
 extern const struct k_clock alarm_clock;
 
 int posix_timer_event(struct k_itimer *timr, int si_private);

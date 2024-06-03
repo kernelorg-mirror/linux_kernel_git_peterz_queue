@@ -164,7 +164,7 @@ posix_cpu_clock_getres(const clockid_t which_clock, struct timespec64 *tp)
 	if (!error) {
 		tp->tv_sec = 0;
 		tp->tv_nsec = ((NSEC_PER_SEC + HZ - 1) / HZ);
-		if (CPUCLOCK_WHICH(which_clock) == CPUCLOCK_SCHED) {
+		if (CPUCLOCK_WHICH(which_clock) >= CPUCLOCK_SCHED) {
 			/*
 			 * If sched_clock is using a cycle counter, we
 			 * don't have any idea of its true resolution
@@ -197,6 +197,9 @@ static u64 cpu_clock_sample(const clockid_t clkid, struct task_struct *p)
 
 	if (clkid == CPUCLOCK_SCHED)
 		return task_sched_runtime(p);
+
+	if (clkid == CPUCLOCK_DVFS)
+		return task_sched_dvfs_runtime(p);
 
 	task_cputime(p, &utime, &stime);
 
@@ -1628,6 +1631,7 @@ static long posix_cpu_nsleep_restart(struct restart_block *restart_block)
 
 #define PROCESS_CLOCK	make_process_cpuclock(0, CPUCLOCK_SCHED)
 #define THREAD_CLOCK	make_thread_cpuclock(0, CPUCLOCK_SCHED)
+#define THREAD_DVFS_CLOCK make_thread_cpuclock(0, CPUCLOCK_DVFS)
 
 static int process_cpu_clock_getres(const clockid_t which_clock,
 				    struct timespec64 *tp)
@@ -1664,6 +1668,11 @@ static int thread_cpu_timer_create(struct k_itimer *timer)
 	timer->it_clock = THREAD_CLOCK;
 	return posix_cpu_timer_create(timer);
 }
+static int thread_dvfs_cpu_clock_get(const clockid_t which_clock,
+				struct timespec64 *tp)
+{
+	return posix_cpu_clock_get(THREAD_DVFS_CLOCK, tp);
+}
 
 const struct k_clock clock_posix_cpu = {
 	.clock_getres		= posix_cpu_clock_getres,
@@ -1689,4 +1698,9 @@ const struct k_clock clock_thread = {
 	.clock_getres		= thread_cpu_clock_getres,
 	.clock_get_timespec	= thread_cpu_clock_get,
 	.timer_create		= thread_cpu_timer_create,
+};
+
+const struct k_clock clock_thread_dvfs = {
+	.clock_getres		= thread_cpu_clock_getres,
+	.clock_get_timespec	= thread_dvfs_cpu_clock_get,
 };

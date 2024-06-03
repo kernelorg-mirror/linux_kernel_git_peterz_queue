@@ -13,9 +13,9 @@
  *
  * Bit 2 indicates whether a cpu clock refers to a thread or a process.
  *
- * Bits 1 and 0 give the type: PROF=0, VIRT=1, SCHED=2, or FD=3.
+ * Bits 1 and 0 give the type: PROF=0, VIRT=1, SCHED=2, or DVSF=3
  *
- * A clockid is invalid if bits 2, 1, and 0 are all set.
+ * (DVFS is PERTHREAD only)
  */
 #define CPUCLOCK_PID(clock)		((pid_t) ~((clock) >> 3))
 #define CPUCLOCK_PERTHREAD(clock) \
@@ -27,6 +27,7 @@
 #define CPUCLOCK_PROF		0
 #define CPUCLOCK_VIRT		1
 #define CPUCLOCK_SCHED		2
+#define CPUCLOCK_DVFS		3
 #define CPUCLOCK_MAX		3
 #define CLOCKFD			CPUCLOCK_MAX
 #define CLOCKFD_MASK		(CPUCLOCK_PERTHREAD_MASK|CPUCLOCK_CLOCK_MASK)
