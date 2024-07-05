@@ -26,6 +26,7 @@
 #include <linux/task_work.h>
 #include <linux/shmem_fs.h>
 #include <linux/khugepaged.h>
+#include <linux/srcu.h>
 
 #include <linux/uprobes.h>
 
@@ -49,6 +50,11 @@ static struct mutex uprobes_mmap_mutex[UPROBES_HASH_SZ];
 
 DEFINE_STATIC_PERCPU_RWSEM(dup_mmap_sem);
 
+/*
+ * Covers uprobe->consumers lifetime.
+ */
+DEFINE_STATIC_SRCU(uprobes_srcu);
+
 /* Have a copy of original instruction */
 #define UPROBE_COPY_INSN	0
 
@@ -57,6 +63,7 @@ struct uprobe {
 	refcount_t		ref;
 	struct rcu_head		rcu;
 	struct rw_semaphore	register_rwsem;
+	seqcount_t		register_seq;
 	struct rw_semaphore	consumer_rwsem;
 	struct list_head	pending_list;
 	struct uprobe_consumer	*consumers;
@@ -760,6 +767,7 @@ static struct uprobe *alloc_uprobe(struct inode *inode, loff_t offset,
 	uprobe->offset = offset;
 	uprobe->ref_ctr_offset = ref_ctr_offset;
 	init_rwsem(&uprobe->register_rwsem);
+	seqcount_init(&uprobe->register_seq);
 	init_rwsem(&uprobe->consumer_rwsem);
 
 	/* add to uprobes_tree, sorted on inode:offset */
@@ -782,8 +790,8 @@ static struct uprobe *alloc_uprobe(struct inode *inode, loff_t offset,
 static void consumer_add(struct uprobe *uprobe, struct uprobe_consumer *uc)
 {
 	down_write(&uprobe->consumer_rwsem);
-	uc->next = uprobe->consumers;
-	uprobe->consumers = uc;
+	WRITE_ONCE(uc->next, uprobe->consumers);
+	rcu_assign_pointer(uprobe->consumers, uc);
 	up_write(&uprobe->consumer_rwsem);
 }
 
@@ -800,7 +808,7 @@ static bool consumer_del(struct uprobe *uprobe, struct uprobe_consumer *uc)
 	down_write(&uprobe->consumer_rwsem);
 	for (con = &uprobe->consumers; *con; con = &(*con)->next) {
 		if (*con == uc) {
-			*con = uc->next;
+			WRITE_ONCE(*con, uc->next);
 			ret = true;
 			break;
 		}
@@ -1139,9 +1147,13 @@ void uprobe_unregister(struct inode *inode, loff_t offset, struct uprobe_consume
 		return;
 
 	down_write(&uprobe->register_rwsem);
+	raw_write_seqcount_begin(&uprobe->register_seq);
 	__uprobe_unregister(uprobe, uc);
+	raw_write_seqcount_end(&uprobe->register_seq);
 	up_write(&uprobe->register_rwsem);
 	put_uprobe(uprobe);
+
+	synchronize_srcu(&uprobes_srcu);
 }
 EXPORT_SYMBOL_GPL(uprobe_unregister);
 
@@ -1204,10 +1216,12 @@ retry:
 	down_write(&uprobe->register_rwsem);
 	ret = -EAGAIN;
 	if (likely(uprobe_is_active(uprobe))) {
+		raw_write_seqcount_begin(&uprobe->register_seq);
 		consumer_add(uprobe, uc);
 		ret = register_for_each_vma(uprobe, uc);
 		if (ret)
 			__uprobe_unregister(uprobe, uc);
+		raw_write_seqcount_end(&uprobe->register_seq);
 	}
 	up_write(&uprobe->register_rwsem);
 	put_uprobe(uprobe);
@@ -1250,10 +1264,12 @@ int uprobe_apply(struct inode *inode, loff_t offset,
 		return ret;
 
 	down_write(&uprobe->register_rwsem);
+	raw_write_seqcount_begin(&uprobe->register_seq);
 	for (con = uprobe->consumers; con && con != uc ; con = con->next)
 		;
 	if (con)
 		ret = register_for_each_vma(uprobe, add ? uc : NULL);
+	raw_write_seqcount_end(&uprobe->register_seq);
 	up_write(&uprobe->register_rwsem);
 	put_uprobe(uprobe);
 
@@ -2096,15 +2112,23 @@ static struct uprobe *find_active_uprobe(unsigned long bp_vaddr, int *is_swbp)
 	return uprobe;
 }
 
+#define for_each_consumer_rcu(pos, head) \
+	for (pos = rcu_dereference_raw(head); pos; \
+	     pos = rcu_dereference_raw(pos->next))
+
 static void handler_chain(struct uprobe *uprobe, struct pt_regs *regs)
 {
 	struct uprobe_consumer *uc;
 	int remove = UPROBE_HANDLER_REMOVE;
 	bool need_prep = false; /* prepare return uprobe, when needed */
 	bool had_handler = false;
+	unsigned int seq;
 
-	down_read(&uprobe->register_rwsem);
-	for (uc = uprobe->consumers; uc; uc = uc->next) {
+	guard(srcu)(&uprobes_srcu);
+
+	seq = raw_read_seqcount_begin(&uprobe->register_seq);
+
+	for_each_consumer_rcu(uc, uprobe->consumers) {
 		int rc = 0;
 
 		if (uc->handler) {
@@ -2134,9 +2158,25 @@ static void handler_chain(struct uprobe *uprobe, struct pt_regs *regs)
 	if (need_prep && !remove)
 		prepare_uretprobe(uprobe, regs); /* put bp at return */
 
-	if (remove)
+	if (remove) {
+		/*
+		 * Removing uprobes is a slow path, after all, the more probes
+		 * you remove, the less probe hits you get.
+		 *
+		 * This needs to serialize against uprobe_register(), such that
+		 * if the above RCU iteration missed a new handler that
+		 * would've liked to keep the probe, we don't go uninstall the
+		 * probe after it already ran register_for_each_vma().
+		 *
+		 * The rwsem ensures exclusivity against uprobe_register()
+		 * while the seqcount will avoid the removal if anything has
+		 * changed since we started.
+		 */
+		guard(rwsem_read)(&uprobe->register_rwsem);
+		if (read_seqcount_retry(&uprobe->register_seq, seq))
+			return;
 		unapply_uprobe(uprobe, current->mm);
-	up_read(&uprobe->register_rwsem);
+	}
 }
 
 static void
@@ -2145,12 +2185,12 @@ handle_uretprobe_chain(struct return_instance *ri, struct pt_regs *regs)
 	struct uprobe *uprobe = ri->uprobe;
 	struct uprobe_consumer *uc;
 
-	down_read(&uprobe->register_rwsem);
-	for (uc = uprobe->consumers; uc; uc = uc->next) {
+	guard(srcu)(&uprobes_srcu);
+
+	for_each_consumer_rcu(uc, uprobe->consumers) {
 		if (uc->ret_handler)
 			uc->ret_handler(uc, ri->func, regs);
 	}
-	up_read(&uprobe->register_rwsem);
 }
 
 static struct return_instance *find_next_ret_chain(struct return_instance *ri)
