@@ -3181,9 +3181,11 @@ static void bpf_uprobe_unregister(struct path *path, struct bpf_uprobe *uprobes,
 	u32 i;
 
 	for (i = 0; i < cnt; i++) {
-		uprobe_unregister(d_real_inode(path->dentry), uprobes[i].offset,
-				  &uprobes[i].consumer);
+		uprobe_unregister_nosync(d_real_inode(path->dentry), uprobes[i].offset,
+					 &uprobes[i].consumer);
 	}
+	if (cnt)
+		uprobe_unregister_sync();
 }
 
 static void bpf_uprobe_multi_link_release(struct bpf_link *link)

@@ -1138,7 +1138,7 @@ __uprobe_unregister(struct uprobe *uprobe, struct uprobe_consumer *uc)
  * @offset: offset from the start of the file.
  * @uc: identify which probe if multiple probes are colocated.
  */
-void uprobe_unregister(struct inode *inode, loff_t offset, struct uprobe_consumer *uc)
+void uprobe_unregister_nosync(struct inode *inode, loff_t offset, struct uprobe_consumer *uc)
 {
 	struct uprobe *uprobe;
 
@@ -1152,10 +1152,14 @@ void uprobe_unregister(struct inode *inode, loff_t offset, struct uprobe_consume
 	raw_write_seqcount_end(&uprobe->register_seq);
 	up_write(&uprobe->register_rwsem);
 	put_uprobe(uprobe);
+}
+EXPORT_SYMBOL_GPL(uprobe_unregister_nosync);
 
+void uprobe_unregister_sync(void)
+{
 	synchronize_srcu(&uprobes_srcu);
 }
-EXPORT_SYMBOL_GPL(uprobe_unregister);
+EXPORT_SYMBOL_GPL(uprobe_unregister_sync);
 
 /*
  * __uprobe_register - register a probe
