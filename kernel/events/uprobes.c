@@ -51,7 +51,7 @@ static struct mutex uprobes_mmap_mutex[UPROBES_HASH_SZ];
 DEFINE_STATIC_PERCPU_RWSEM(dup_mmap_sem);
 
 /*
- * Covers uprobe->consumers lifetime.
+ * Covers uprobe->consumers lifetime as well as struct uprobe.
  */
 DEFINE_STATIC_SRCU(uprobes_srcu);
 
@@ -626,7 +626,7 @@ static void put_uprobe(struct uprobe *uprobe)
 		mutex_lock(&delayed_uprobe_lock);
 		delayed_uprobe_remove(uprobe, NULL);
 		mutex_unlock(&delayed_uprobe_lock);
-		call_rcu(&uprobe->rcu, uprobe_free_rcu);
+		call_srcu(&uprobes_srcu, &uprobe->rcu, uprobe_free_rcu);
 	}
 }
 
@@ -678,7 +678,7 @@ static struct uprobe *__find_uprobe(struct inode *inode, loff_t offset)
 	struct rb_node *node = rb_find_rcu(&key, &uprobes_tree, __uprobe_cmp_key);
 
 	if (node)
-		return try_get_uprobe(__node_2_uprobe(node));
+		return __node_2_uprobe(node);
 
 	return NULL;
 }
@@ -691,7 +691,7 @@ static struct uprobe *find_uprobe(struct inode *inode, loff_t offset)
 {
 	unsigned int seq;
 
-	guard(rcu)();
+	lockdep_assert(srcu_read_lock_held(&uprobes_srcu));
 
 	do {
 		seq = read_seqcount_begin(&uprobes_seqcount);
@@ -1142,6 +1142,8 @@ void uprobe_unregister_nosync(struct inode *inode, loff_t offset, struct uprobe_
 {
 	struct uprobe *uprobe;
 
+	guard(srcu)(&uprobes_srcu);
+
 	uprobe = find_uprobe(inode, offset);
 	if (WARN_ON(!uprobe))
 		return;
@@ -1151,7 +1153,6 @@ void uprobe_unregister_nosync(struct inode *inode, loff_t offset, struct uprobe_
 	__uprobe_unregister(uprobe, uc);
 	raw_write_seqcount_end(&uprobe->register_seq);
 	up_write(&uprobe->register_rwsem);
-	put_uprobe(uprobe);
 }
 EXPORT_SYMBOL_GPL(uprobe_unregister_nosync);
 
@@ -1263,6 +1264,8 @@ int uprobe_apply(struct inode *inode, loff_t offset,
 	struct uprobe_consumer *con;
 	int ret = -ENOENT;
 
+	guard(srcu)(&uprobes_srcu);
+
 	uprobe = find_uprobe(inode, offset);
 	if (WARN_ON(!uprobe))
 		return ret;
@@ -1275,7 +1278,6 @@ int uprobe_apply(struct inode *inode, loff_t offset,
 		ret = register_for_each_vma(uprobe, add ? uc : NULL);
 	raw_write_seqcount_end(&uprobe->register_seq);
 	up_write(&uprobe->register_rwsem);
-	put_uprobe(uprobe);
 
 	return ret;
 }
@@ -1929,10 +1931,14 @@ static void prepare_uretprobe(struct uprobe *uprobe, struct pt_regs *regs)
 	if (!ri)
 		return;
 
+	ri->uprobe = try_get_uprobe(uprobe);
+	if (!ri->uprobe)
+		goto err_mem;
+
 	trampoline_vaddr = get_trampoline_vaddr();
 	orig_ret_vaddr = arch_uretprobe_hijack_return_addr(trampoline_vaddr, regs);
 	if (orig_ret_vaddr == -1)
-		goto fail;
+		goto err_uprobe;
 
 	/* drop the entries invalidated by longjmp() */
 	chained = (orig_ret_vaddr == trampoline_vaddr);
@@ -1950,12 +1956,11 @@ static void prepare_uretprobe(struct uprobe *uprobe, struct pt_regs *regs)
 			 * attack from user-space.
 			 */
 			uprobe_warn(current, "handle tail call");
-			goto fail;
+			goto err_uprobe;
 		}
 		orig_ret_vaddr = utask->return_instances->orig_ret_vaddr;
 	}
 
-	ri->uprobe = get_uprobe(uprobe);
 	ri->func = instruction_pointer(regs);
 	ri->stack = user_stack_pointer(regs);
 	ri->orig_ret_vaddr = orig_ret_vaddr;
@@ -1966,7 +1971,10 @@ static void prepare_uretprobe(struct uprobe *uprobe, struct pt_regs *regs)
 	utask->return_instances = ri;
 
 	return;
-fail:
+
+err_uprobe:
+	uprobe_put(ri->uprobe);
+err_mem:
 	kfree(ri);
 }
 
@@ -1982,22 +1990,31 @@ pre_ssout(struct uprobe *uprobe, struct pt_regs *regs, unsigned long bp_vaddr)
 	if (!utask)
 		return -ENOMEM;
 
+	utask->active_uprobe = try_get_uprobe(uprobe);
+	if (!utask->active_uprobe)
+		return -ESRCH;
+
 	xol_vaddr = xol_get_insn_slot(uprobe);
-	if (!xol_vaddr)
-		return -ENOMEM;
+	if (!xol_vaddr) {
+		err = -ENOMEM;
+		goto err_uprobe;
+	}
 
 	utask->xol_vaddr = xol_vaddr;
 	utask->vaddr = bp_vaddr;
 
 	err = arch_uprobe_pre_xol(&uprobe->arch, regs);
-	if (unlikely(err)) {
-		xol_free_insn_slot(current);
-		return err;
-	}
+	if (unlikely(err))
+		goto err_xol;
 
-	utask->active_uprobe = uprobe;
 	utask->state = UTASK_SSTEP;
 	return 0;
+
+err_xol:
+	xol_free_insn_slot(current);
+err_uprobe:
+	put_uprobe(utask->active_uprobe);
+	return err;
 }
 
 /*
@@ -2128,7 +2145,7 @@ static void handler_chain(struct uprobe *uprobe, struct pt_regs *regs)
 	bool had_handler = false;
 	unsigned int seq;
 
-	guard(srcu)(&uprobes_srcu);
+	lockdep_assert(srcu_read_lock_held(&uprobes_srcu));
 
 	seq = raw_read_seqcount_begin(&uprobe->register_seq);
 
@@ -2276,6 +2293,8 @@ static void handle_swbp(struct pt_regs *regs)
 	if (bp_vaddr == get_trampoline_vaddr())
 		return handle_trampoline(regs);
 
+	guard(srcu)(&uprobes_srcu);
+
 	uprobe = find_active_uprobe(bp_vaddr, &is_swbp);
 	if (!uprobe) {
 		if (is_swbp > 0) {
@@ -2304,7 +2323,7 @@ static void handle_swbp(struct pt_regs *regs)
 	 * new and not-yet-analyzed uprobe at the same address, restart.
 	 */
 	if (unlikely(!test_bit(UPROBE_COPY_INSN, &uprobe->flags)))
-		goto out;
+		return;
 
 	/*
 	 * Pairs with the smp_wmb() in prepare_uprobe().
@@ -2317,22 +2336,17 @@ static void handle_swbp(struct pt_regs *regs)
 
 	/* Tracing handlers use ->utask to communicate with fetch methods */
 	if (!get_utask())
-		goto out;
+		return;
 
 	if (arch_uprobe_ignore(&uprobe->arch, regs))
-		goto out;
+		return;
 
 	handler_chain(uprobe, regs);
 
 	if (arch_uprobe_skip_sstep(&uprobe->arch, regs))
-		goto out;
-
-	if (!pre_ssout(uprobe, regs, bp_vaddr))
 		return;
 
-	/* arch_uprobe_skip_sstep() succeeded, or restart if can't singlestep */
-out:
-	put_uprobe(uprobe);
+	pre_ssout(uprobe, regs, bp_vaddr);
 }
 
 /*
