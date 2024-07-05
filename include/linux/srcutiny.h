@@ -71,6 +71,16 @@ static inline int __srcu_read_lock(struct srcu_struct *ssp)
 	return idx;
 }
 
+static inline void __srcu_clone_read_lock(struct srcu_struct *ssp, int idx)
+{
+	int newval;
+
+	preempt_disable();  // Needed for PREEMPT_AUTO
+	newval = READ_ONCE(ssp->srcu_lock_nesting[idx]) + 1;
+	WRITE_ONCE(ssp->srcu_lock_nesting[idx], newval);
+	preempt_enable();
+}
+
 static inline void synchronize_srcu_expedited(struct srcu_struct *ssp)
 {
 	synchronize_srcu(ssp);

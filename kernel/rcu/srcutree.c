@@ -720,6 +720,11 @@ int __srcu_read_lock(struct srcu_struct *ssp)
 }
 EXPORT_SYMBOL_GPL(__srcu_read_lock);
 
+void __srcu_clone_read_lock(struct srcu_struct *ssp, int idx)
+{
+	this_cpu_inc(ssp->sda->srcu_lock_count[idx].counter);
+}
+
 /*
  * Removes the count for the old reader from the appropriate per-CPU
  * element of the srcu_struct.  Note that this may well be a different
