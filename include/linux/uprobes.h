@@ -15,6 +15,7 @@
 #include <linux/rbtree.h>
 #include <linux/types.h>
 #include <linux/wait.h>
+#include <linux/timer.h>
 
 struct vm_area_struct;
 struct mm_struct;
@@ -79,6 +80,10 @@ struct uprobe_task {
 	struct return_instance		*return_instances;
 	unsigned int			depth;
 	unsigned int			active_srcu_idx;
+
+	struct timer_list		ri_timer;
+	struct callback_head		ri_task_work;
+	struct task_struct		*task;
 };
 
 struct return_instance {
@@ -86,7 +91,8 @@ struct return_instance {
 	unsigned long		func;
 	unsigned long		stack;		/* stack pointer */
 	unsigned long		orig_ret_vaddr; /* original return address */
-	bool			chained;	/* true, if instance is nested */
+	u8			chained;	/* true, if instance is nested */
+	u8			has_ref;
 	int			srcu_idx;
 
 	struct return_instance	*next;		/* keep as stack */

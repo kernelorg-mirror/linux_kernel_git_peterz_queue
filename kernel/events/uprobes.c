@@ -64,6 +64,8 @@ DEFINE_STATIC_SRCU(uprobes_srcu);
  */
 DEFINE_STATIC_SRCU(uretprobes_srcu);
 
+#define URETPROBE_SRCU_TIMO	msecs_to_jiffies(50)
+
 /* Have a copy of original instruction */
 #define UPROBE_COPY_INSN	0
 
@@ -1761,7 +1763,12 @@ unsigned long uprobe_get_trap_addr(struct pt_regs *regs)
 static struct return_instance *free_ret_instance(struct return_instance *ri)
 {
 	struct return_instance *next = ri->next;
-	__srcu_read_unlock(&uretprobes_srcu, ri->srcu_idx);
+	if (ri->uprobe) {
+		if (ri->has_ref)
+			put_uprobe(ri->uprobe);
+		else
+			__srcu_read_unlock(&uretprobes_srcu, ri->srcu_idx);
+	}
 	kfree(ri);
 	return next;
 }
@@ -1785,9 +1792,79 @@ void uprobe_free_utask(struct task_struct *t)
 	while (ri)
 		ri = free_ret_instance(ri);
 
+	timer_delete_sync(&utask->ri_timer);
+	task_work_cancel(utask->task, &utask->ri_task_work);
 	xol_free_insn_slot(t);
 	kfree(utask);
 	t->utask = NULL;
+}
+
+static void __return_instance_ref(struct uprobe_task *utask)
+{
+	struct return_instance *ri;
+
+	for (ri = utask->return_instances; ri; ri = ri->next) {
+		if (!ri->uprobe)
+			continue;
+		if (ri->has_ref)
+			continue;
+		if (refcount_inc_not_zero(&ri->uprobe->ref))
+			ri->has_ref = true;
+		else
+			ri->uprobe = NULL;
+		__srcu_read_unlock(&uretprobes_srcu, ri->srcu_idx);
+	}
+}
+
+static void return_instance_task_work(struct callback_head *head)
+{
+	struct uprobe_task *utask = container_of(head, struct uprobe_task, ri_task_work);
+	utask->ri_task_work.next = &utask->ri_task_work;
+	__return_instance_ref(utask);
+}
+
+static int return_instance_blocked(struct task_struct *p, void *arg)
+{
+	unsigned int state = READ_ONCE(p->__state);
+
+	if (state == TASK_RUNNING || state == TASK_WAKING)
+		return 0;
+
+	if (p->on_rq)
+		return 0;
+
+	/*
+	 * Per __task_needs_rq_locked() we now have: !p->on_cpu and only hold
+	 * p->pi_lock, and can consider the task fully blocked.
+	 */
+
+	__return_instance_ref(p->utask);
+	return 1;
+}
+
+static void return_instance_timer(struct timer_list *timer)
+{
+	struct uprobe_task *utask = container_of(timer, struct uprobe_task, ri_timer);
+
+	if (utask->ri_task_work.next != &utask->ri_task_work)
+		return;
+
+	if (task_call_func(utask->task, return_instance_blocked, NULL))
+		return;
+
+	task_work_add(utask->task, &utask->ri_task_work, TWA_SIGNAL);
+}
+
+static struct uprobe_task *alloc_utask(struct task_struct *task)
+{
+	struct uprobe_task *utask = kzalloc(sizeof(struct uprobe_task), GFP_KERNEL);
+	if (!utask)
+		return NULL;
+	timer_setup(&utask->ri_timer, return_instance_timer, 0);
+	init_task_work(&utask->ri_task_work, return_instance_task_work);
+	utask->ri_task_work.next = &utask->ri_task_work;
+	utask->task = task;
+	return utask;
 }
 
 /*
@@ -1801,7 +1878,7 @@ void uprobe_free_utask(struct task_struct *t)
 static struct uprobe_task *get_utask(void)
 {
 	if (!current->utask)
-		current->utask = kzalloc(sizeof(struct uprobe_task), GFP_KERNEL);
+		current->utask = alloc_utask(current);
 	return current->utask;
 }
 
@@ -1810,7 +1887,7 @@ static int dup_utask(struct task_struct *t, struct uprobe_task *o_utask)
 	struct uprobe_task *n_utask;
 	struct return_instance **p, *o, *n;
 
-	n_utask = kzalloc(sizeof(struct uprobe_task), GFP_KERNEL);
+	n_utask = alloc_utask(t);
 	if (!n_utask)
 		return -ENOMEM;
 	t->utask = n_utask;
@@ -1822,13 +1899,20 @@ static int dup_utask(struct task_struct *t, struct uprobe_task *o_utask)
 			return -ENOMEM;
 
 		*n = *o;
-		__srcu_clone_read_lock(&uretprobes_srcu, n->srcu_idx);
+		if (n->uprobe) {
+			if (n->has_ref)
+				get_uprobe(n->uprobe);
+			else
+				__srcu_clone_read_lock(&uretprobes_srcu, n->srcu_idx);
+		}
 		n->next = NULL;
 
 		*p = n;
 		p = &n->next;
 		n_utask->depth++;
 	}
+	if (n_utask->return_instances)
+		mod_timer(&n_utask->ri_timer, jiffies + URETPROBE_SRCU_TIMO);
 
 	return 0;
 }
@@ -1967,6 +2051,7 @@ static void prepare_uretprobe(struct uprobe *uprobe, struct pt_regs *regs)
 
 	ri->srcu_idx = __srcu_read_lock(&uretprobes_srcu);
 	ri->uprobe = uprobe;
+	ri->has_ref = 0;
 	ri->func = instruction_pointer(regs);
 	ri->stack = user_stack_pointer(regs);
 	ri->orig_ret_vaddr = orig_ret_vaddr;
@@ -1975,6 +2060,8 @@ static void prepare_uretprobe(struct uprobe *uprobe, struct pt_regs *regs)
 	utask->depth++;
 	ri->next = utask->return_instances;
 	utask->return_instances = ri;
+
+	mod_timer(&utask->ri_timer, jiffies + URETPROBE_SRCU_TIMO);
 
 	return;
 
@@ -2204,6 +2291,9 @@ handle_uretprobe_chain(struct return_instance *ri, struct pt_regs *regs)
 	struct uprobe *uprobe = ri->uprobe;
 	struct uprobe_consumer *uc;
 
+	if (!uprobe)
+		return;
+
 	guard(srcu)(&uprobes_srcu);
 
 	for_each_consumer_rcu(uc, uprobe->consumers) {
@@ -2250,8 +2340,10 @@ static void handle_trampoline(struct pt_regs *regs)
 
 		instruction_pointer_set(regs, ri->orig_ret_vaddr);
 		do {
-			if (valid)
+			if (valid) {
 				handle_uretprobe_chain(ri, regs);
+				mod_timer(&utask->ri_timer, jiffies + URETPROBE_SRCU_TIMO);
+			}
 			ri = free_ret_instance(ri);
 			utask->depth--;
 		} while (ri != next);
