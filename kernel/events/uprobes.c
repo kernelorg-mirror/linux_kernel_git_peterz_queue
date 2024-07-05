@@ -205,7 +205,7 @@ static int __replace_page(struct vm_area_struct *vma, unsigned long addr,
 	folio_put(old_folio);
 
 	err = 0;
- unlock:
+unlock:
 	mmu_notifier_invalidate_range_end(&range);
 	folio_unlock(old_folio);
 	return err;
@@ -857,7 +857,7 @@ static int prepare_uprobe(struct uprobe *uprobe, struct file *file,
 	smp_wmb(); /* pairs with the smp_rmb() in handle_swbp() */
 	set_bit(UPROBE_COPY_INSN, &uprobe->flags);
 
- out:
+out:
 	up_write(&uprobe->consumer_rwsem);
 
 	return ret;
@@ -965,7 +965,7 @@ build_map_info(struct address_space *mapping, loff_t offset, bool is_register)
 	struct map_info *info;
 	int more = 0;
 
- again:
+again:
 	i_mmap_lock_read(mapping);
 	vma_interval_tree_foreach(vma, &mapping->i_mmap, pgoff, pgoff) {
 		if (!valid_vma(vma, is_register))
@@ -1019,7 +1019,7 @@ build_map_info(struct address_space *mapping, loff_t offset, bool is_register)
 	} while (--more);
 
 	goto again;
- out:
+out:
 	while (prev)
 		prev = free_map_info(prev);
 	return curr;
@@ -1068,13 +1068,13 @@ register_for_each_vma(struct uprobe *uprobe, struct uprobe_consumer *new)
 				err |= remove_breakpoint(uprobe, mm, info->vaddr);
 		}
 
- unlock:
+unlock:
 		mmap_write_unlock(mm);
- free:
+free:
 		mmput(mm);
 		info = free_map_info(info);
 	}
- out:
+out:
 	percpu_up_write(&dup_mmap_sem);
 	return err;
 }
@@ -1159,7 +1159,7 @@ static int __uprobe_register(struct inode *inode, loff_t offset,
 	if (!IS_ALIGNED(ref_ctr_offset, sizeof(short)))
 		return -EINVAL;
 
- retry:
+retry:
 	uprobe = alloc_uprobe(inode, offset, ref_ctr_offset);
 	if (!uprobe)
 		return -ENOMEM;
@@ -1468,7 +1468,7 @@ static int xol_add_vma(struct mm_struct *mm, struct xol_area *area)
 	ret = 0;
 	/* pairs with get_xol_area() */
 	smp_store_release(&mm->uprobes_state.xol_area, area); /* ^^^ */
- fail:
+fail:
 	mmap_write_unlock(mm);
 
 	return ret;
@@ -1508,11 +1508,11 @@ static struct xol_area *__create_xol_area(unsigned long vaddr)
 		return area;
 
 	__free_page(area->pages[0]);
- free_bitmap:
+free_bitmap:
 	kfree(area->bitmap);
- free_area:
+free_area:
 	kfree(area);
- out:
+out:
 	return NULL;
 }
 
@@ -1915,7 +1915,7 @@ static void prepare_uretprobe(struct uprobe *uprobe, struct pt_regs *regs)
 	utask->return_instances = ri;
 
 	return;
- fail:
+fail:
 	kfree(ri);
 }
 
@@ -2031,7 +2031,7 @@ static int is_trap_at_addr(struct mm_struct *mm, unsigned long vaddr)
 
 	copy_from_page(page, vaddr, &opcode, UPROBE_SWBP_INSN_SIZE);
 	put_page(page);
- out:
+out:
 	/* This needs to return true for any variant of the trap insn */
 	return is_trap_insn(&opcode);
 }
@@ -2159,7 +2159,7 @@ static void handle_trampoline(struct pt_regs *regs)
 	utask->return_instances = ri;
 	return;
 
- sigill:
+sigill:
 	uprobe_warn(current, "handle uretprobe, sending SIGILL.");
 	force_sig(SIGILL);
 
