@@ -78,6 +78,7 @@ struct uprobe_task {
 
 	struct return_instance		*return_instances;
 	unsigned int			depth;
+	unsigned int			active_srcu_idx;
 };
 
 struct return_instance {
@@ -86,6 +87,7 @@ struct return_instance {
 	unsigned long		stack;		/* stack pointer */
 	unsigned long		orig_ret_vaddr; /* original return address */
 	bool			chained;	/* true, if instance is nested */
+	int			srcu_idx;
 
 	struct return_instance	*next;		/* keep as stack */
 };

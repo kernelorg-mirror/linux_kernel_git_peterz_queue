@@ -54,6 +54,15 @@ DEFINE_STATIC_PERCPU_RWSEM(dup_mmap_sem);
  * Covers uprobe->consumers lifetime as well as struct uprobe.
  */
 DEFINE_STATIC_SRCU(uprobes_srcu);
+/*
+ * Covers return_instance->uprobe and utask->active_uprobe. Separate from
+ * uprobe_srcu because uprobe_unregister() doesn't need to wait for this
+ * and these lifetimes can be fairly long.
+ *
+ * Notably, these sections span userspace and as such use
+ * __srcu_read_{,un}lock() to elide lockdep.
+ */
+DEFINE_STATIC_SRCU(uretprobes_srcu);
 
 /* Have a copy of original instruction */
 #define UPROBE_COPY_INSN	0
@@ -596,23 +605,22 @@ set_orig_insn(struct arch_uprobe *auprobe, struct mm_struct *mm, unsigned long v
 			*(uprobe_opcode_t *)&auprobe->insn);
 }
 
-static struct uprobe *try_get_uprobe(struct uprobe *uprobe)
-{
-	if (refcount_inc_not_zero(&uprobe->ref))
-		return uprobe;
-	return NULL;
-}
-
 static struct uprobe *get_uprobe(struct uprobe *uprobe)
 {
 	refcount_inc(&uprobe->ref);
 	return uprobe;
 }
 
-static void uprobe_free_rcu(struct rcu_head *rcu)
+static void uprobe_free_stage2(struct rcu_head *rcu)
 {
 	struct uprobe *uprobe = container_of(rcu, struct uprobe, rcu);
 	kfree(uprobe);
+}
+
+static void uprobe_free_stage1(struct rcu_head *rcu)
+{
+	struct uprobe *uprobe = container_of(rcu, struct uprobe, rcu);
+	call_srcu(&uretprobes_srcu, &uprobe->rcu, uprobe_free_stage2);
 }
 
 static void put_uprobe(struct uprobe *uprobe)
@@ -626,7 +634,7 @@ static void put_uprobe(struct uprobe *uprobe)
 		mutex_lock(&delayed_uprobe_lock);
 		delayed_uprobe_remove(uprobe, NULL);
 		mutex_unlock(&delayed_uprobe_lock);
-		call_srcu(&uprobes_srcu, &uprobe->rcu, uprobe_free_rcu);
+		call_srcu(&uprobes_srcu, &uprobe->rcu, uprobe_free_stage1);
 	}
 }
 
@@ -1753,7 +1761,7 @@ unsigned long uprobe_get_trap_addr(struct pt_regs *regs)
 static struct return_instance *free_ret_instance(struct return_instance *ri)
 {
 	struct return_instance *next = ri->next;
-	put_uprobe(ri->uprobe);
+	__srcu_read_unlock(&uretprobes_srcu, ri->srcu_idx);
 	kfree(ri);
 	return next;
 }
@@ -1771,7 +1779,7 @@ void uprobe_free_utask(struct task_struct *t)
 		return;
 
 	if (utask->active_uprobe)
-		put_uprobe(utask->active_uprobe);
+		__srcu_read_unlock(&uretprobes_srcu, utask->active_srcu_idx);
 
 	ri = utask->return_instances;
 	while (ri)
@@ -1814,7 +1822,7 @@ static int dup_utask(struct task_struct *t, struct uprobe_task *o_utask)
 			return -ENOMEM;
 
 		*n = *o;
-		get_uprobe(n->uprobe);
+		__srcu_clone_read_lock(&uretprobes_srcu, n->srcu_idx);
 		n->next = NULL;
 
 		*p = n;
@@ -1931,14 +1939,10 @@ static void prepare_uretprobe(struct uprobe *uprobe, struct pt_regs *regs)
 	if (!ri)
 		return;
 
-	ri->uprobe = try_get_uprobe(uprobe);
-	if (!ri->uprobe)
-		goto err_mem;
-
 	trampoline_vaddr = get_trampoline_vaddr();
 	orig_ret_vaddr = arch_uretprobe_hijack_return_addr(trampoline_vaddr, regs);
 	if (orig_ret_vaddr == -1)
-		goto err_uprobe;
+		goto err_mem;
 
 	/* drop the entries invalidated by longjmp() */
 	chained = (orig_ret_vaddr == trampoline_vaddr);
@@ -1956,11 +1960,13 @@ static void prepare_uretprobe(struct uprobe *uprobe, struct pt_regs *regs)
 			 * attack from user-space.
 			 */
 			uprobe_warn(current, "handle tail call");
-			goto err_uprobe;
+			goto err_mem;
 		}
 		orig_ret_vaddr = utask->return_instances->orig_ret_vaddr;
 	}
 
+	ri->srcu_idx = __srcu_read_lock(&uretprobes_srcu);
+	ri->uprobe = uprobe;
 	ri->func = instruction_pointer(regs);
 	ri->stack = user_stack_pointer(regs);
 	ri->orig_ret_vaddr = orig_ret_vaddr;
@@ -1972,8 +1978,6 @@ static void prepare_uretprobe(struct uprobe *uprobe, struct pt_regs *regs)
 
 	return;
 
-err_uprobe:
-	uprobe_put(ri->uprobe);
 err_mem:
 	kfree(ri);
 }
@@ -1990,15 +1994,9 @@ pre_ssout(struct uprobe *uprobe, struct pt_regs *regs, unsigned long bp_vaddr)
 	if (!utask)
 		return -ENOMEM;
 
-	utask->active_uprobe = try_get_uprobe(uprobe);
-	if (!utask->active_uprobe)
-		return -ESRCH;
-
 	xol_vaddr = xol_get_insn_slot(uprobe);
-	if (!xol_vaddr) {
-		err = -ENOMEM;
-		goto err_uprobe;
-	}
+	if (!xol_vaddr)
+		return -ENOMEM;
 
 	utask->xol_vaddr = xol_vaddr;
 	utask->vaddr = bp_vaddr;
@@ -2007,13 +2005,13 @@ pre_ssout(struct uprobe *uprobe, struct pt_regs *regs, unsigned long bp_vaddr)
 	if (unlikely(err))
 		goto err_xol;
 
+	utask->active_srcu_idx = __srcu_read_lock(&uretprobes_srcu);
+	utask->active_uprobe = uprobe;
 	utask->state = UTASK_SSTEP;
 	return 0;
 
 err_xol:
 	xol_free_insn_slot(current);
-err_uprobe:
-	put_uprobe(utask->active_uprobe);
 	return err;
 }
 
@@ -2366,7 +2364,7 @@ static void handle_singlestep(struct uprobe_task *utask, struct pt_regs *regs)
 	else
 		WARN_ON_ONCE(1);
 
-	put_uprobe(uprobe);
+	__srcu_read_unlock(&uretprobes_srcu, utask->active_srcu_idx);
 	utask->active_uprobe = NULL;
 	utask->state = UTASK_RUNNING;
 	xol_free_insn_slot(current);
