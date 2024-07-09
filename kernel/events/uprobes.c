@@ -2101,6 +2101,7 @@ static void handler_chain(struct uprobe *uprobe, struct pt_regs *regs)
 	struct uprobe_consumer *uc;
 	int remove = UPROBE_HANDLER_REMOVE;
 	bool need_prep = false; /* prepare return uprobe, when needed */
+	bool had_handler = false;
 
 	down_read(&uprobe->register_rwsem);
 	for (uc = uprobe->consumers; uc; uc = uc->next) {
@@ -2115,16 +2116,26 @@ static void handler_chain(struct uprobe *uprobe, struct pt_regs *regs)
 		if (uc->ret_handler)
 			need_prep = true;
 
+		/*
+		 * A single handler that does not mask out REMOVE, means the
+		 * probe stays.
+		 */
+		had_handler = true;
 		remove &= rc;
 	}
+
+	/*
+	 * If there were no handlers called, nobody asked for it to be removed
+	 * but also nobody got to mask the value. Fix it up.
+	 */
+	if (!had_handler)
+		remove = 0;
 
 	if (need_prep && !remove)
 		prepare_uretprobe(uprobe, regs); /* put bp at return */
 
-	if (remove && uprobe->consumers) {
-		WARN_ON(!uprobe_is_active(uprobe));
+	if (remove)
 		unapply_uprobe(uprobe, current->mm);
-	}
 	up_read(&uprobe->register_rwsem);
 }
 
