@@ -5917,8 +5917,7 @@ __pick_next_task(struct rq *rq, struct task_struct *prev, struct rq_flags *rf)
 		/* Assume the next prioritized class is idle_sched_class */
 		if (!p) {
 			p = pick_task_idle(rq);
-			put_prev_task(rq, prev);
-			set_next_task_first(rq, p);
+			put_prev_set_next_task(rq, prev, p);
 		}
 
 		/*
@@ -5957,8 +5956,7 @@ restart:
 		} else {
 			p = class->pick_task(rq);
 			if (p) {
-				put_prev_task(rq, prev);
-				set_next_task_first(rq, p);
+				put_prev_set_next_task(rq, prev, p);
 				return p;
 			}
 		}
@@ -6231,8 +6229,7 @@ pick_next_task(struct rq *rq, struct task_struct *prev, struct rq_flags *rf)
 	}
 
 out_set_next:
-	put_prev_task(rq, prev);
-	set_next_task_first(rq, next);
+	put_prev_set_next_task(rq, prev, p);
 out:
 	if (rq->core->core_forceidle_count && next == rq->idle)
 		queue_core_balance(rq);
