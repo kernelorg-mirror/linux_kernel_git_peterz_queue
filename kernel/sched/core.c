@@ -5916,8 +5916,9 @@ __pick_next_task(struct rq *rq, struct task_struct *prev, struct rq_flags *rf)
 
 		/* Assume the next prioritized class is idle_sched_class */
 		if (!p) {
+			p = pick_task_idle(rq);
 			put_prev_task(rq, prev);
-			p = pick_next_task_idle(rq);
+			set_next_task_first(rq, p);
 		}
 
 		/*
@@ -5939,7 +5940,6 @@ __pick_next_task(struct rq *rq, struct task_struct *prev, struct rq_flags *rf)
 
 restart:
 	prev_balance(rq, prev, rf);
-	put_prev_task(rq, prev);
 
 	/*
 	 * We've updated @prev and no longer need the server link, clear it.
@@ -5950,9 +5950,18 @@ restart:
 		prev->dl_server = NULL;
 
 	for_each_class(class) {
-		p = class->pick_next_task(rq);
-		if (p)
-			return p;
+		if (class->pick_next_task) {
+			p = class->pick_next_task(rq, prev);
+			if (p)
+				return p;
+		} else {
+			p = class->pick_task(rq);
+			if (p) {
+				put_prev_task(rq, prev);
+				set_next_task_first(rq, p);
+				return p;
+			}
+		}
 	}
 
 	BUG(); /* The idle class should always have a runnable task. */
@@ -6048,7 +6057,6 @@ pick_next_task(struct rq *rq, struct task_struct *prev, struct rq_flags *rf)
 	}
 
 	prev_balance(rq, prev, rf);
-	put_prev_task(rq, prev);
 
 	/*
 	 * We've updated @prev and no longer need the server link, clear it.
@@ -6223,7 +6231,8 @@ pick_next_task(struct rq *rq, struct task_struct *prev, struct rq_flags *rf)
 	}
 
 out_set_next:
-	set_next_task(rq, next);
+	put_prev_task(rq, prev);
+	set_next_task_first(rq, next);
 out:
 	if (rq->core->core_forceidle_count && next == rq->idle)
 		queue_core_balance(rq);
