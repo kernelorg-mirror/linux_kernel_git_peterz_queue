@@ -2318,7 +2318,7 @@ struct sched_class {
 	 */
 	struct task_struct *(*pick_next_task)(struct rq *rq, struct task_struct *prev);
 
-	void (*put_prev_task)(struct rq *rq, struct task_struct *p);
+	void (*put_prev_task)(struct rq *rq, struct task_struct *p, bool change_class);
 	void (*set_next_task)(struct rq *rq, struct task_struct *p, bool first);
 
 #ifdef CONFIG_SMP
@@ -2390,7 +2390,7 @@ put_prev_set_next_task(struct rq *rq, struct task_struct *prev, struct task_stru
 	 */
 	prev->dl_server = NULL;
 
-	prev->sched_class->put_prev_task(rq, prev);
+	prev->sched_class->put_prev_task(rq, prev, prev->sched_class != next->sched_class);
 	next->sched_class->set_next_task(rq, next, true);
 }
 
