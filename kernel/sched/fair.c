@@ -8756,14 +8756,6 @@ again:
 		cfs_rq = group_cfs_rq(se);
 	} while (cfs_rq);
 
-	/*
-	 * This can be called from directly from CFS's ->pick_task() or indirectly
-	 * from DL's ->pick_task when fair server is enabled. In the indirect case,
-	 * DL will set ->dl_server just after this function is called, so its Ok to
-	 * clear. In the direct case, we are picking directly so we must clear it.
-	 */
-	task_of(se)->dl_server = NULL;
-
 	return task_of(se);
 }
 

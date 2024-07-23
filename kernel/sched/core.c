@@ -3656,8 +3656,6 @@ ttwu_do_activate(struct rq *rq, struct task_struct *p, int wake_flags,
 		rq->idle_stamp = 0;
 	}
 #endif
-
-	p->dl_server = NULL;
 }
 
 /*
@@ -5920,33 +5918,11 @@ __pick_next_task(struct rq *rq, struct task_struct *prev, struct rq_flags *rf)
 			put_prev_set_next_task(rq, prev, p);
 		}
 
-		/*
-		 * This is a normal CFS pick, but the previous could be a DL pick.
-		 * Clear it as previous is no longer picked.
-		 */
-		if (prev->dl_server)
-			prev->dl_server = NULL;
-
-		/*
-		 * This is the fast path; it cannot be a DL server pick;
-		 * therefore even if @p == @prev, ->dl_server must be NULL.
-		 */
-		if (p->dl_server)
-			p->dl_server = NULL;
-
 		return p;
 	}
 
 restart:
 	prev_balance(rq, prev, rf);
-
-	/*
-	 * We've updated @prev and no longer need the server link, clear it.
-	 * Must be done before ->pick_next_task() because that can (re)set
-	 * ->dl_server.
-	 */
-	if (prev->dl_server)
-		prev->dl_server = NULL;
 
 	for_each_class(class) {
 		if (class->pick_next_task) {
@@ -6055,14 +6031,6 @@ pick_next_task(struct rq *rq, struct task_struct *prev, struct rq_flags *rf)
 	}
 
 	prev_balance(rq, prev, rf);
-
-	/*
-	 * We've updated @prev and no longer need the server link, clear it.
-	 * Must be done before ->pick_next_task() because that can (re)set
-	 * ->dl_server.
-	 */
-	if (prev->dl_server)
-		prev->dl_server = NULL;
 
 	smt_mask = cpu_smt_mask(cpu);
 	need_sync = !!rq->core->core_cookie;

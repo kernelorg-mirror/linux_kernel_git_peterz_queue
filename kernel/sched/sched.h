@@ -2380,6 +2380,16 @@ static inline void
 put_prev_set_next_task(struct rq *rq, struct task_struct *prev, struct task_struct *next)
 {
 	WARN_ON_ONCE(rq->curr != prev);
+
+	if (prev == next)
+		return;
+
+	/*
+	 * This is the final put before switching to a new task, clear the
+	 * dl_server state such that any non-running task will have it unset.
+	 */
+	prev->dl_server = NULL;
+
 	prev->sched_class->put_prev_task(rq, prev);
 	next->sched_class->set_next_task(rq, next, true);
 }
