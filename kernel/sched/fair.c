@@ -8723,7 +8723,7 @@ preempt:
 	resched_curr(rq);
 }
 
-static struct task_struct *pick_task_fair(struct rq *rq)
+static struct task_struct *pick_task_fair(struct rq *rq, bool core)
 {
 	struct sched_entity *se;
 	struct cfs_rq *cfs_rq;
@@ -8761,7 +8761,7 @@ pick_next_task_fair(struct rq *rq, struct task_struct *prev, struct rq_flags *rf
 	int new_tasks;
 
 again:
-	p = pick_task_fair(rq);
+	p = pick_task_fair(rq, false);
 	if (!p)
 		goto idle;
 	se = &p->se;
@@ -8850,9 +8850,10 @@ static bool fair_server_has_tasks(struct sched_dl_entity *dl_se)
 	return !!dl_se->rq->cfs.nr_running;
 }
 
-static struct task_struct *fair_server_pick_task(struct sched_dl_entity *dl_se)
+static struct task_struct *
+fair_server_pick_task(struct sched_dl_entity *dl_se, bool core)
 {
-	return pick_task_fair(dl_se->rq);
+	return pick_task_fair(dl_se->rq, core);
 }
 
 void fair_server_init(struct rq *rq)
