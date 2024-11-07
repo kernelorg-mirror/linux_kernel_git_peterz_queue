@@ -1540,6 +1540,16 @@ static void mod_set_crcs(struct module *mod)
 	free(buf);
 }
 
+static const char *mod_basename(const char *modname)
+{
+	const char *basename = strrchr(modname, '/');
+	if (basename)
+		basename++;
+	else
+		basename = modname;
+	return basename;
+}
+
 static void read_symbols(const char *modname)
 {
 	const char *symname;
@@ -1684,11 +1694,7 @@ static void check_exports(struct module *mod)
 		s->crc_valid = exp->crc_valid;
 		s->crc = exp->crc;
 
-		basename = strrchr(mod->name, '/');
-		if (basename)
-			basename++;
-		else
-			basename = mod->name;
+		basename = mod_basename(mod->name);
 
 		if (!contains_namespace(&mod->imported_namespaces, exp->namespace)) {
 			modpost_log(!allow_missing_ns_imports,
