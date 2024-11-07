@@ -24,11 +24,23 @@
 	.long sym
 #endif
 
-#define ___EXPORT_SYMBOL(sym, license, ns)		\
+/*
+ * LLVM intregrated assembler refuses to merge adjacent string literals (like
+ * C and GNU-as) and chokes on:
+ *
+ *   .asciz "MODULE_" "kvm" ;
+ *
+ * As would be generated when using EXPORT_SYMBOL_GPL_FOR(foo, "kvm"), use
+ * varargs to assemble it like so:
+ *
+ *   .ascii "MODULE_", "kvm", "\0" ;
+ *
+ */
+#define ___EXPORT_SYMBOL(sym, license, ns...)		\
 	.section ".export_symbol","a"		ASM_NL	\
 	__export_symbol_##sym:			ASM_NL	\
 		.asciz license			ASM_NL	\
-		.asciz ns			ASM_NL	\
+		.ascii ns, "\0"			ASM_NL	\
 		__EXPORT_SYMBOL_REF(sym)	ASM_NL	\
 	.previous
 
@@ -39,20 +51,20 @@
  * be reused in other execution contexts such as the UEFI stub or the
  * decompressor.
  */
-#define __EXPORT_SYMBOL(sym, license, ns)
+#define __EXPORT_SYMBOL(sym, license, ns...)
 
 #elif defined(__GENKSYMS__)
 
-#define __EXPORT_SYMBOL(sym, license, ns)	__GENKSYMS_EXPORT_SYMBOL(sym)
+#define __EXPORT_SYMBOL(sym, license, ns...)	__GENKSYMS_EXPORT_SYMBOL(sym)
 
 #elif defined(__ASSEMBLY__)
 
-#define __EXPORT_SYMBOL(sym, license, ns) \
+#define __EXPORT_SYMBOL(sym, license, ns...) \
 	___EXPORT_SYMBOL(sym, license, ns)
 
 #else
 
-#define __EXPORT_SYMBOL(sym, license, ns)			\
+#define __EXPORT_SYMBOL(sym, license, ns...)			\
 	extern typeof(sym) sym;					\
 	__ADDRESSABLE(sym)					\
 	asm(__stringify(___EXPORT_SYMBOL(sym, license, ns)))
@@ -69,5 +81,7 @@
 #define EXPORT_SYMBOL_GPL(sym)		_EXPORT_SYMBOL(sym, "GPL")
 #define EXPORT_SYMBOL_NS(sym, ns)	__EXPORT_SYMBOL(sym, "", ns)
 #define EXPORT_SYMBOL_NS_GPL(sym, ns)	__EXPORT_SYMBOL(sym, "GPL", ns)
+
+#define EXPORT_SYMBOL_GPL_FOR(sym, mods) __EXPORT_SYMBOL(sym, "GPL", "MODULE_", mods)
 
 #endif /* _LINUX_EXPORT_H */
