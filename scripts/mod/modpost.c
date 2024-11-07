@@ -1552,7 +1552,6 @@ static const char *mod_basename(const char *modname)
 
 static void read_symbols(const char *modname)
 {
-	char module_namespace[MODULE_NAME_LEN + 8];
 	const char *symname;
 	char *version;
 	char *license;
@@ -1587,10 +1586,6 @@ static void read_symbols(const char *modname)
 		for (namespace = get_modinfo(&info, "import_ns"); namespace;
 		     namespace = get_next_modinfo(&info, "import_ns", namespace))
 			add_namespace(&mod->imported_namespaces, namespace);
-
-		snprintf(module_namespace, sizeof(module_namespace), "MODULE_%s",
-			 mod_basename(mod->name));
-		add_namespace(&mod->imported_namespaces, module_namespace);
 
 		if (extra_warn && !get_modinfo(&info, "description"))
 			warn("missing MODULE_DESCRIPTION() in %s\n", modname);
@@ -1674,6 +1669,38 @@ void buf_write(struct buffer *buf, const char *s, int len)
 	buf->pos += len;
 }
 
+/*
+ * @namespace ~= "MODULE_foo-*,bar", match @modname to 'foo-*' or 'bar'
+ */
+static bool module_namespace(const char *namespace, const char *modname)
+{
+	size_t len, modlen = strlen(modname);
+	const char *sep;
+	bool glob;
+
+	if (strncmp(namespace, "MODULE_", 7) != 0)
+		return false;
+
+	for (namespace += 7; *namespace; namespace = sep) {
+		sep = strchrnul(namespace, ',');
+		len = sep - namespace;
+
+		glob = false;
+		if (sep[-1] == '*') {
+			len--;
+			glob = true;
+		}
+
+		if (*sep)
+			sep++;
+
+		if (strncmp(namespace, modname, len) == 0 && (glob || len == modlen))
+			return true;
+	}
+
+	return false;
+}
+
 static void check_exports(struct module *mod)
 {
 	struct symbol *s, *exp;
@@ -1701,7 +1728,8 @@ static void check_exports(struct module *mod)
 
 		basename = mod_basename(mod->name);
 
-		if (!contains_namespace(&mod->imported_namespaces, exp->namespace)) {
+		if (!module_namespace(exp->namespace, basename) &&
+		    !contains_namespace(&mod->imported_namespaces, exp->namespace)) {
 			modpost_log(!allow_missing_ns_imports,
 				    "module %s uses symbol %s from namespace %s, but does not import it.\n",
 				    basename, exp->name, exp->namespace);

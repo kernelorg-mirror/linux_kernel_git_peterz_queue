@@ -1093,6 +1093,38 @@ static char *get_modinfo(const struct load_info *info, const char *tag)
 	return get_next_modinfo(info, tag, NULL);
 }
 
+/*
+ * @namespace ~= "MODULE_foo-*,bar", match @modname to 'foo-*' or 'bar'
+ */
+static bool verify_module_namespace(const char *namespace, const char *modname)
+{
+	size_t len, modlen = strlen(modname);
+	const char *sep;
+	bool glob;
+
+	if (strncmp(namespace, "MODULE_", 7) != 0)
+		return false;
+
+	for (namespace += 7; *namespace; namespace = sep) {
+		sep = strchrnul(namespace, ',');
+		len = sep - namespace;
+
+		glob = false;
+		if (sep[-1] == '*') {
+			len--;
+			glob = true;
+		}
+
+		if (*sep)
+			sep++;
+
+		if (strncmp(namespace, modname, len) == 0 && (glob || len == modlen))
+			return true;
+	}
+
+	return false;
+}
+
 static int verify_namespace_is_imported(const struct load_info *info,
 					const struct kernel_symbol *sym,
 					struct module *mod)
@@ -1102,11 +1134,8 @@ static int verify_namespace_is_imported(const struct load_info *info,
 
 	namespace = kernel_symbol_namespace(sym);
 	if (namespace && namespace[0]) {
-		/*
-		 * Implicitly import MODULE_${mod->name} namespace.
-		 */
-		if (strncmp(namespace, "MODULE_", 7) == 0 &&
-		    strcmp(namespace+7, mod->name) == 0)
+
+		if (verify_module_namespace(namespace, mod->name))
 			return 0;
 
 		for_each_modinfo_entry(imported_namespace, info, "import_ns") {
