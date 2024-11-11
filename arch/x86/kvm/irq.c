@@ -89,7 +89,7 @@ int kvm_cpu_has_injectable_intr(struct kvm_vcpu *v)
 
 	return kvm_apic_has_interrupt(v) != -1; /* LAPIC */
 }
-EXPORT_SYMBOL_GPL(kvm_cpu_has_injectable_intr);
+EXPORT_SYMBOL_GPL_FOR(kvm_cpu_has_injectable_intr, "kvm,kvm-intel,kvm-amd");
 
 /*
  * check if there is pending interrupt without
@@ -102,7 +102,7 @@ int kvm_cpu_has_interrupt(struct kvm_vcpu *v)
 
 	return kvm_apic_has_interrupt(v) != -1;	/* LAPIC */
 }
-EXPORT_SYMBOL_GPL(kvm_cpu_has_interrupt);
+EXPORT_SYMBOL_GPL_FOR(kvm_cpu_has_interrupt, "kvm,kvm-intel,kvm-amd");
 
 /*
  * Read pending interrupt(from non-APIC source)
@@ -131,7 +131,7 @@ int kvm_cpu_get_extint(struct kvm_vcpu *v)
 	} else
 		return kvm_pic_read_irq(v->kvm); /* PIC */
 }
-EXPORT_SYMBOL_GPL(kvm_cpu_get_extint);
+EXPORT_SYMBOL_GPL_FOR(kvm_cpu_get_extint, "kvm,kvm-intel,kvm-amd");
 
 /*
  * Read pending interrupt vector and intack.

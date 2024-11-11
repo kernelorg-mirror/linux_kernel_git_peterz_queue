@@ -238,7 +238,7 @@ int kvm_page_track_register_notifier(struct kvm *kvm,
 	write_unlock(&kvm->mmu_lock);
 	return 0;
 }
-EXPORT_SYMBOL_GPL(kvm_page_track_register_notifier);
+EXPORT_SYMBOL_GPL_FOR(kvm_page_track_register_notifier, "kvm,kvm-intel,kvm-amd");
 
 /*
  * stop receiving the event interception. It is the opposed operation of
@@ -258,7 +258,7 @@ void kvm_page_track_unregister_notifier(struct kvm *kvm,
 
 	kvm_put_kvm(kvm);
 }
-EXPORT_SYMBOL_GPL(kvm_page_track_unregister_notifier);
+EXPORT_SYMBOL_GPL_FOR(kvm_page_track_unregister_notifier, "kvm,kvm-intel,kvm-amd");
 
 /*
  * Notify the node that write access is intercepted and write emulation is
@@ -337,7 +337,7 @@ int kvm_write_track_add_gfn(struct kvm *kvm, gfn_t gfn)
 
 	return 0;
 }
-EXPORT_SYMBOL_GPL(kvm_write_track_add_gfn);
+EXPORT_SYMBOL_GPL_FOR(kvm_write_track_add_gfn, "kvm,kvm-intel,kvm-amd");
 
 /*
  * remove the guest page from the tracking pool which stops the interception
@@ -367,5 +367,5 @@ int kvm_write_track_remove_gfn(struct kvm *kvm, gfn_t gfn)
 
 	return 0;
 }
-EXPORT_SYMBOL_GPL(kvm_write_track_remove_gfn);
+EXPORT_SYMBOL_GPL_FOR(kvm_write_track_remove_gfn, "kvm,kvm-intel,kvm-amd");
 #endif
