@@ -1094,6 +1094,30 @@ static char *get_modinfo(const struct load_info *info, const char *tag)
 }
 
 /*
+ * Like strncmp(), except s/-/_/g as per scripts/Makefile.lib:name-fix-token rule.
+ */
+static int mod_strncmp(const char *str_a, const char *str_b, size_t n)
+{
+	for (int i = 0; i < n; i++) {
+		char a = str_a[i];
+		char b = str_b[i];
+		int d;
+
+		if (a == '-') a = '_';
+		if (b == '-') b = '_';
+
+		d = a - b;
+		if (d)
+			return d;
+
+		if (!a)
+			break;
+	}
+
+	return 0;
+}
+
+/*
  * @namespace ~= "MODULE_foo-*,bar", match @modname to 'foo-*' or 'bar'
  */
 static bool verify_module_namespace(const char *namespace, const char *modname)
@@ -1118,7 +1142,7 @@ static bool verify_module_namespace(const char *namespace, const char *modname)
 		if (*sep)
 			sep++;
 
-		if (strncmp(namespace, modname, len) == 0 && (glob || len == modlen))
+		if (mod_strncmp(namespace, modname, len) == 0 && (glob || len == modlen))
 			return true;
 	}
 
