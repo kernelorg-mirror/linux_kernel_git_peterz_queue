@@ -98,7 +98,7 @@ __jump_label_transform(struct jump_entry *entry,
 	 * always nop being the 'currently valid' instruction
 	 */
 	if (init || system_state == SYSTEM_BOOTING) {
-		text_poke_early((void *)jump_entry_code(entry), jlp.code, jlp.size);
+		text_poke_early(NULL, (void *)jump_entry_code(entry), jlp.code, jlp.size);
 		return;
 	}
 

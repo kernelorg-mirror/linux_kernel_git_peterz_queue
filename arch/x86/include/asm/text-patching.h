@@ -13,7 +13,9 @@
  */
 #define POKE_MAX_OPCODE_SIZE	5
 
-extern void text_poke_early(void *addr, const void *opcode, size_t len);
+struct module;
+
+extern void text_poke_early(struct module *mod, void *addr, const void *opcode, size_t len);
 
 extern void apply_relocation(u8 *buf, const u8 * const instr, size_t instrlen, u8 *repl, size_t repl_len);
 

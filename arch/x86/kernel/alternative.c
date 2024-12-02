@@ -176,7 +176,6 @@ extern s32 __return_sites[], __return_sites_end[];
 extern s32 __cfi_sites[], __cfi_sites_end[];
 extern s32 __ibt_endbr_seal[], __ibt_endbr_seal_end[];
 extern s32 __smp_locks[], __smp_locks_end[];
-void text_poke_early(void *addr, const void *opcode, size_t len);
 
 /*
  * Matches NOP and NOPL, not any of the other possible NOPs.
@@ -505,8 +504,7 @@ void __init_or_module noinline apply_alternatives(struct alt_instr *start,
 		if (!boot_cpu_has(a->cpuid) == !(a->flags & ALT_FLAG_NOT)) {
 			memcpy(insn_buff, instr, a->instrlen);
 			optimize_nops(instr, insn_buff, a->instrlen);
-			text_poke_early(module_writable_address(mod, instr),
-					insn_buff, a->instrlen);
+			text_poke_early(mod, instr, insn_buff, a->instrlen);
 			continue;
 		}
 
@@ -534,7 +532,7 @@ void __init_or_module noinline apply_alternatives(struct alt_instr *start,
 		DUMP_BYTES(ALT, replacement, a->replacementlen, "%px:   rpl_insn: ", replacement);
 		DUMP_BYTES(ALT, insn_buff, insn_buff_sz, "%px: final_insn: ", instr);
 
-		text_poke_early(module_writable_address(mod, instr), insn_buff, insn_buff_sz);
+		text_poke_early(mod, instr, insn_buff, insn_buff_sz);
 	}
 
 	kasan_enable_current();
@@ -766,7 +764,7 @@ void __init_or_module noinline apply_retpolines(s32 *start, s32 *end, struct mod
 			optimize_nops(addr, bytes, len);
 			DUMP_BYTES(RETPOLINE, ((u8*)addr),  len, "%px: orig: ", addr);
 			DUMP_BYTES(RETPOLINE, ((u8*)bytes), len, "%px: repl: ", addr);
-			text_poke_early(module_writable_address(mod, addr), bytes, len);
+			text_poke_early(mod, addr, bytes, len);
 		}
 	}
 }
@@ -838,7 +836,7 @@ void __init_or_module noinline apply_returns(s32 *start, s32 *end, struct module
 		if (len == insn.length) {
 			DUMP_BYTES(RET, ((u8*)addr),  len, "%px: orig: ", addr);
 			DUMP_BYTES(RET, ((u8*)bytes), len, "%px: repl: ", addr);
-			text_poke_early(module_writable_address(mod, addr), bytes, len);
+			text_poke_early(mod, addr, bytes, len);
 		}
 	}
 }
@@ -876,7 +874,7 @@ static void __init_or_module poison_endbr(void *addr, struct module *mod, bool w
 	 */
 	DUMP_BYTES(ENDBR, ((u8*)addr), 4, "%px: orig: ", addr);
 	DUMP_BYTES(ENDBR, ((u8*)&poison), 4, "%px: repl: ", addr);
-	text_poke_early(module_writable_address(mod, addr), &poison, 4);
+	text_poke_early(mod, addr, &poison, 4);
 }
 
 /*
@@ -1142,7 +1140,7 @@ static int cfi_disable_callers(s32 *start, s32 *end, struct module *mod)
 		if (!hash) /* nocfi callers */
 			continue;
 
-		text_poke_early(module_writable_address(mod, addr), jmp, 2);
+		text_poke_early(mod, addr, jmp, 2);
 	}
 
 	return 0;
@@ -1165,7 +1163,7 @@ static int cfi_enable_callers(s32 *start, s32 *end, struct module *mod)
 		if (!hash) /* nocfi callers */
 			continue;
 
-		text_poke_early(module_writable_address(mod, addr), mov, 2);
+		text_poke_early(mod, addr, mov, 2);
 	}
 
 	return 0;
@@ -1186,7 +1184,7 @@ static int cfi_rand_preamble(s32 *start, s32 *end, struct module *mod)
 			return -EINVAL;
 
 		hash = cfi_rehash(hash);
-		text_poke_early(module_writable_address(mod, addr + 1), &hash, 4);
+		text_poke_early(mod, addr + 1, &hash, 4);
 	}
 
 	return 0;
@@ -1205,11 +1203,9 @@ static int cfi_rewrite_preamble(s32 *start, s32 *end, struct module *mod)
 			 addr, addr, 5, addr))
 			return -EINVAL;
 
-		text_poke_early(module_writable_address(mod, addr),
-				fineibt_preamble_start, fineibt_preamble_size);
+		text_poke_early(mod, addr, fineibt_preamble_start, fineibt_preamble_size);
 		WARN_ON(*(u32 *)(addr + fineibt_preamble_hash) != 0x12345678);
-		text_poke_early(module_writable_address(mod, addr + fineibt_preamble_hash),
-				&hash, 4);
+		text_poke_early(mod, addr + fineibt_preamble_hash, &hash, 4);
 	}
 
 	return 0;
@@ -1239,7 +1235,7 @@ static int cfi_rand_callers(s32 *start, s32 *end, struct module *mod)
 		hash = decode_caller_hash(addr);
 		if (hash) {
 			hash = -cfi_rehash(hash);
-			text_poke_early(module_writable_address(mod, addr + 2), &hash, 4);
+			text_poke_early(mod, addr + 2, &hash, 4);
 		}
 	}
 
@@ -1257,11 +1253,9 @@ static int cfi_rewrite_callers(s32 *start, s32 *end, struct module *mod)
 		addr -= fineibt_caller_size;
 		hash = decode_caller_hash(addr);
 		if (hash) {
-			text_poke_early(module_writable_address(mod, addr),
-					fineibt_caller_start, fineibt_caller_size);
+			text_poke_early(mod, addr, fineibt_caller_start, fineibt_caller_size);
 			WARN_ON(*(u32 *)(addr + fineibt_caller_hash) != 0x12345678);
-			text_poke_early(module_writable_addres(addr + fineibt_caller_hash),
-					&hash, 4);
+			text_poke_early(mod, addr + fineibt_caller_hash, &hash, 4);
 		}
 		/* rely on apply_retpolines() */
 	}
@@ -1354,7 +1348,7 @@ err:
 static inline void poison_hash(void *addr, struct module *mod)
 {
 	u32 zero = 0;
-	text_poke_early(module_writeable_address(mod, addr), &zero, sizeof(zero));
+	text_poke_early(mod, addr, &zero, sizeof(zero));
 }
 
 static void poison_cfi(void *addr, struct module *mod)
@@ -1747,6 +1741,7 @@ void __init alternative_instructions(void)
 
 /**
  * text_poke_early - Update instructions on a live kernel at boot time
+ * @mod: module being patched or NULL for core kernel text
  * @addr: address to modify
  * @opcode: source of the copy
  * @len: length to copy
@@ -1757,9 +1752,10 @@ void __init alternative_instructions(void)
  * instructions. And on the local CPU you need to be protected against NMI or
  * MCE handlers seeing an inconsistent instruction while you patch.
  */
-void __init_or_module text_poke_early(void *addr, const void *opcode,
-				      size_t len)
+__init_or_module
+void text_poke_early(struct module *mod, void *addr, const void *opcode, size_t len)
 {
+	void *wr_addr = module_writable_address(mod, addr);
 	unsigned long flags;
 
 	if (boot_cpu_has(X86_FEATURE_NX) &&
@@ -1769,10 +1765,10 @@ void __init_or_module text_poke_early(void *addr, const void *opcode,
 		 * code cannot be running and speculative code-fetches are
 		 * prevented. Just change the code.
 		 */
-		memcpy(addr, opcode, len);
+		memcpy(wr_addr, opcode, len);
 	} else {
 		local_irq_save(flags);
-		memcpy(addr, opcode, len);
+		memcpy(wr_addr, opcode, len);
 		sync_core();
 		local_irq_restore(flags);
 

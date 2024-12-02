@@ -106,7 +106,7 @@ static void __ref __static_call_transform(void *insn, enum insn_type type,
 		return;
 
 	if (system_state == SYSTEM_BOOTING || modinit)
-		return text_poke_early(insn, code, size);
+		return text_poke_early(NULL, insn, code, size);
 
 	text_poke_bp(insn, code, size, emulate);
 }

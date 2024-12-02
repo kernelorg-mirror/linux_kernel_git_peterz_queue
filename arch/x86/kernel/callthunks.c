@@ -226,7 +226,7 @@ static __init_or_module void patch_call(void *addr, const struct core_text *ct)
 	prdbg("Patch call at: %pS %px to %pS %px -> %px \n", addr, addr,
 		dest, dest, pad);
 	__text_gen_insn(bytes, CALL_INSN_OPCODE, addr, pad, CALL_INSN_SIZE);
-	text_poke_early(addr, bytes, CALL_INSN_SIZE);
+	text_poke_early(NULL, addr, bytes, CALL_INSN_SIZE);
 }
 
 static __init_or_module void
