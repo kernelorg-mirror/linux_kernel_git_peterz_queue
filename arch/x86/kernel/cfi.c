@@ -65,7 +65,7 @@ static bool decode_cfi_insn(struct pt_regs *regs, unsigned long *target,
  * Checks if a ud2 trap is because of a CFI failure, and handles the trap
  * if needed. Returns a bug_trap_type value similarly to report_bug.
  */
-enum bug_trap_type handle_cfi_failure(struct pt_regs *regs)
+enum bug_trap_type handle_cfi_failure(int ud_type, struct pt_regs *regs)
 {
 	enum bug_trap_type btt;
 	unsigned long target;
@@ -82,7 +82,7 @@ enum bug_trap_type handle_cfi_failure(struct pt_regs *regs)
 		break;
 
 	case CFI_FINEIBT:
-		if (!decode_fineibt_insn(regs, &target, &type))
+		if (!decode_fineibt_insn(ud_type, regs, &target, &type))
 			return BUG_TRAP_TYPE_NONE;
 
 		break;
