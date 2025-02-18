@@ -916,6 +916,7 @@ void __init_or_module apply_seal_endbr(s32 *start, s32 *end) { }
 #endif
 
 enum cfi_mode cfi_mode __ro_after_init = __CFI_DEFAULT;
+bool cfi_warn __ro_after_init = false;
 
 #ifdef CONFIG_CFI_CLANG
 struct bpf_insn;
@@ -1022,6 +1023,9 @@ static __init int cfi_parse_cmdline(char *str)
 			cfi_mode = CFI_FINEIBT;
 		} else if (!strcmp(str, "norand")) {
 			cfi_rand = false;
+		} else if (!strcmp(str, "warn")) {
+			pr_alert("CFI mismatch non-fatal!\n");
+			cfi_warn = true;
 		} else {
 			pr_err("Ignoring unknown cfi option (%s).", str);
 		}

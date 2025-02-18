@@ -100,6 +100,7 @@ enum cfi_mode {
 };
 
 extern enum cfi_mode cfi_mode;
+extern bool cfi_warn;
 
 struct pt_regs;
 

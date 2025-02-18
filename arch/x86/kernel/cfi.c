@@ -67,6 +67,7 @@ static bool decode_cfi_insn(struct pt_regs *regs, unsigned long *target,
  */
 enum bug_trap_type handle_cfi_failure(struct pt_regs *regs)
 {
+	enum bug_trap_type btt;
 	unsigned long target;
 	u32 type;
 
@@ -90,7 +91,12 @@ enum bug_trap_type handle_cfi_failure(struct pt_regs *regs)
 		return BUG_TRAP_TYPE_NONE;
 	}
 
-	return report_cfi_failure(regs, regs->ip, &target, type);
+	btt = report_cfi_failure(regs, regs->ip, &target, type);
+	if (btt == BUG_TRAP_TYPE_BUG && cfi_warn) {
+		__warn(NULL, 0, (void *)regs->ip, 0, regs, NULL);
+		btt = BUG_TRAP_TYPE_WARN;
+	}
+	return btt;
 }
 
 /*
