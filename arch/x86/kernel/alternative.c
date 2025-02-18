@@ -1287,6 +1287,59 @@ static int cfi_rand_preamble(s32 *start, s32 *end)
 	return 0;
 }
 
+static void cfi_fineibt_bhi_preamble(void *addr, int arity)
+{
+	bool warn = IS_ENABLED(CONFIG_CFI_PREMISSIVE) || cfi_warn;
+
+	if (!arity)
+		return;
+
+	if (!warn && arity == 1) {
+		/*
+		 * Crazy scheme to allow arity-1 inline:
+		 *
+		 * __cfi_foo:
+		 *  0: f3 0f 1e fa             endbr64
+		 *  4: 41 81 ea 78 56 34 12    sub     0x12345678, %r10d
+		 *  b: 49 0f 45 fa             cmovne  %r10, %rdi
+		 *  f: 75 f5                   jne     __cfi_foo+6
+		 * 11: 0f 1f 00                nopl    (%rax)
+		 *
+		 * On failure it jumps to the 0xEA byte inside the SUBL instruction
+		 * which is a (bad) instruction for x86_64 and trips #UD.
+		 *
+		 * Meanwhile, code that direct calls to foo()+0, decodes the
+		 * tail end as:
+		 *
+		 * foo:
+		 *  0: f5                      cmc
+		 *  1: 0f 1f 00                nopl    (%rax)
+		 *
+		 * which clobbers CF, but does not affect anything ABI
+		 * wise.
+		 *
+		 * Notably, this scheme is incompatible with permissive CFI
+		 * because the cmov is unconditional and RDI will have been
+		 * clobbered.
+		 */
+		const u8 magic[9] = {
+			0x49, 0x0f, 0x45, 0xfa,
+			0x75, 0xf5,
+			BYTES_NOP3,
+		};
+
+		text_poke_early(addr + fineibt_preamble_bhi, magic, 9);
+
+		return;
+	}
+
+	text_poke_early(addr + fineibt_preamble_bhi,
+			text_gen_insn(CALL_INSN_OPCODE,
+				      addr + fineibt_preamble_bhi,
+				      __bhi_args[arity]),
+			CALL_INSN_SIZE);
+}
+
 static int cfi_rewrite_preamble(s32 *start, s32 *end)
 {
 	s32 *s;
@@ -1317,14 +1370,8 @@ static int cfi_rewrite_preamble(s32 *start, s32 *end)
 			  "kCFI preamble has wrong register at: %pS %*ph\n",
 			  addr, 5, addr);
 
-		if (!cfi_bhi || !arity)
-			continue;
-
-		text_poke_early(addr + fineibt_preamble_bhi,
-				text_gen_insn(CALL_INSN_OPCODE,
-					      addr + fineibt_preamble_bhi,
-					      __bhi_args[arity]),
-				CALL_INSN_SIZE);
+		if (cfi_bhi)
+			cfi_fineibt_bhi_preamble(addr, arity);
 	}
 
 	return 0;
@@ -1337,7 +1384,7 @@ static void cfi_rewrite_endbr(s32 *start, s32 *end)
 	for (s = start; s < end; s++) {
 		void *addr = (void *)s + *s;
 
-		if (!is_endbr(addr + 16))
+		if (!exact_endbr(addr + 16))
 			continue;
 
 		poison_endbr(addr + 16);
@@ -1571,8 +1618,17 @@ static void poison_cfi(void *addr)
 static bool decode_fineibt_preamble(int ud_type, struct pt_regs *regs,
 				    unsigned long *target, u32 *type)
 {
-	unsigned long addr = regs->ip - fineibt_preamble_ud2;
+	unsigned long addr;
 	u32 hash;
+
+	if (ud_type == BUG_EA) {
+		/*
+		 * See cfi_fineibt_bhi_preamble(). Cannot recover.
+		 */
+		addr = regs->ip - 6;
+	} else {
+		addr = regs->ip - fineibt_preamble_ud2;
+	}
 
 	if (!exact_endbr((void *)addr))
 		return false;
@@ -1649,8 +1705,18 @@ Efault:
 bool decode_fineibt_insn(int ud_type, struct pt_regs *regs,
 			 unsigned long *target, u32 *type)
 {
-	if (ud_type == BUG_EA)
-		return decode_fineibt_paranoid(ud_type, regs, target, type);
+	if (ud_type == BUG_EA) {
+		u16 bytes;
+
+		__get_kernel_nofault(&bytes, regs->ip - 2, u16, Efault);
+		if (bytes == 0x0174)
+			return decode_fineibt_paranoid(ud_type, regs, target, type);
+		if (bytes == 0x8141)
+			return decode_fineibt_preamble(ud_type, regs, target, type);
+Efault:
+		return false;
+	}
+
 	if (regs->ip > (unsigned long)__bhi_args &&
 	    regs->ip < (unsigned long)__bhi_args_end)
 		return decode_fineibt_bhi(ud_type, regs, target, type);
