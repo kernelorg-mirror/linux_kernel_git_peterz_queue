@@ -286,11 +286,12 @@ static inline void handle_invalid_op(struct pt_regs *regs)
 
 static noinstr bool handle_bug(struct pt_regs *regs)
 {
+	unsigned long addr = regs->ip;
 	bool handled = false;
 	int ud_type, ud_len;
 	s32 ud_imm;
 
-	ud_type = decode_bug(regs->ip, &ud_imm, &ud_len);
+	ud_type = decode_bug(addr, &ud_imm, &ud_len);
 	if (ud_type == BUG_NONE)
 		return handled;
 
@@ -314,7 +315,8 @@ static noinstr bool handle_bug(struct pt_regs *regs)
 	switch (ud_type) {
 	case BUG_EA:
 		if (handle_cfi_failure(ud_type, regs) == BUG_TRAP_TYPE_WARN) {
-			regs->ip += ud_len;
+			if (regs->ip == addr)
+				regs->ip += ud_len;
 			handled = true;
 		}
 		break;
@@ -322,7 +324,8 @@ static noinstr bool handle_bug(struct pt_regs *regs)
 	case BUG_UD2:
 		if (report_bug(regs->ip, regs) == BUG_TRAP_TYPE_WARN ||
 		    handle_cfi_failure(ud_type, regs) == BUG_TRAP_TYPE_WARN) {
-			regs->ip += ud_len;
+			if (regs->ip == addr)
+				regs->ip += ud_len;
 			handled = true;
 		}
 		break;
@@ -338,6 +341,9 @@ static noinstr bool handle_bug(struct pt_regs *regs)
 	default:
 		break;
 	}
+
+	if (!handled && regs->ip != addr)
+		regs->ip = addr;
 
 	if (regs->flags & X86_EFLAGS_IF)
 		raw_local_irq_disable();
