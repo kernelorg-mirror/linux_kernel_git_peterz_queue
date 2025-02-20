@@ -114,7 +114,7 @@ late_initcall(fail_futex_debugfs);
  * We hash on the keys returned from get_futex_key (see below) and return the
  * corresponding hash bucket in the global hash.
  */
-struct futex_hash_bucket *futex_hash(union futex_key *key)
+struct futex_hash_bucket *__futex_hash(union futex_key *key)
 {
 	u32 hash = jhash2((u32 *)key, offsetof(typeof(*key), both.offset) / 4,
 			  key->both.offset);
@@ -122,6 +122,7 @@ struct futex_hash_bucket *futex_hash(union futex_key *key)
 	return &futex_queues[hash & futex_hashmask];
 }
 
+void futex_hash_put(struct futex_hash_bucket *hb) { }
 
 /**
  * futex_setup_timer - set up the sleeping hrtimer.
@@ -957,9 +958,7 @@ static void exit_pi_state_list(struct task_struct *curr)
 		pi_state = list_entry(next, struct futex_pi_state, list);
 		key = pi_state->key;
 		if (1) {
-			struct futex_hash_bucket *hb;
-
-			hb = futex_hash(&key);
+			CLASS(hb, hb)(&key);
 
 			/*
 			 * We can race against put_pi_state() removing itself from the

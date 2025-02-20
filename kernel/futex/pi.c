@@ -939,9 +939,8 @@ retry:
 
 retry_private:
 	if (1) {
-		struct futex_hash_bucket *hb;
+		CLASS(hb, hb)(&q.key);
 
-		hb = futex_hash(&q.key);
 		futex_q_lock(&q, hb);
 
 		ret = futex_lock_pi_atomic(uaddr, hb, &q.key, &q.pi_state, current,
@@ -1017,6 +1016,10 @@ retry_private:
 		 */
 		raw_spin_lock_irq(&q.pi_state->pi_mutex.wait_lock);
 		spin_unlock(q.lock_ptr);
+		/*
+		 * Caution; releasing @hb in-scope.
+		 */
+		futex_hash_put(no_free_ptr(hb));
 		/*
 		 * __rt_mutex_start_proxy_lock() unconditionally enqueues the @rt_waiter
 		 * such that futex_unlock_pi() is guaranteed to observe the waiter when
@@ -1119,7 +1122,6 @@ int futex_unlock_pi(u32 __user *uaddr, unsigned int flags)
 {
 	u32 curval, uval, vpid = task_pid_vnr(current);
 	union futex_key key = FUTEX_KEY_INIT;
-	struct futex_hash_bucket *hb;
 	struct futex_q *top_waiter;
 	int ret;
 
@@ -1139,7 +1141,7 @@ retry:
 	if (ret)
 		return ret;
 
-	hb = futex_hash(&key);
+	CLASS(hb, hb)(&key);
 	spin_lock(&hb->lock);
 retry_hb:
 
