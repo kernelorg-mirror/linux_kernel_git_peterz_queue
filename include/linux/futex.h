@@ -86,6 +86,13 @@ static inline void futex_mm_init(struct mm_struct *mm)
 	mm->futex_hash_bucket = NULL;
 }
 
+static inline bool futex_hash_requires_allocation(void)
+{
+	if (current->mm->futex_hash_bucket)
+		return false;
+	return true;
+}
+
 #else
 static inline void futex_init_task(struct task_struct *tsk) { }
 static inline void futex_exit_recursive(struct task_struct *tsk) { }
@@ -107,6 +114,11 @@ static inline int futex_hash_allocate_default(void)
 }
 static inline void futex_hash_free(struct mm_struct *mm) { }
 static inline void futex_mm_init(struct mm_struct *mm) { }
+
+static inline bool futex_hash_requires_allocation(void)
+{
+	return false;
+}
 
 #endif
 
