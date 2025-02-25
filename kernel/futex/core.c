@@ -117,6 +117,18 @@ static inline bool futex_key_is_private(union futex_key *key)
 	return !(key->both.offset & (FUT_OFF_INODE | FUT_OFF_MMSHARED));
 }
 
+static struct futex_hash_bucket *futex_hash_private(union futex_key *key,
+						    struct futex_hash_bucket *fhb,
+						    u32 hash_mask)
+{
+	u32 hash;
+
+	hash = jhash2((void *)&key->private.address,
+		      sizeof(key->private.address) / 4,
+		      key->both.offset);
+	return &fhb[hash & hash_mask];
+}
+
 /**
  * futex_hash - Return the hash bucket in the global hash
  * @key:	Pointer to the futex key for which the hash is calculated
@@ -131,14 +143,9 @@ struct futex_hash_bucket *__futex_hash(union futex_key *key)
 	u32 hash;
 
 	fhb = current->mm->futex_hash_bucket;
-	if (fhb && futex_key_is_private(key)) {
-		u32 hash_mask = current->mm->futex_hash_mask;
+	if (fhb && futex_key_is_private(key))
+		return futex_hash_private(key, fhb, current->mm->futex_hash_mask);
 
-		hash = jhash2((u32 *)key,
-			      offsetof(typeof(*key), both.offset) / 4,
-			      key->both.offset);
-		return &fhb[hash & hash_mask];
-	}
 	hash = jhash2((u32 *)key,
 		      offsetof(typeof(*key), both.offset) / 4,
 		      key->both.offset);
