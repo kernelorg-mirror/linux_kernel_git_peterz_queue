@@ -138,6 +138,7 @@ static struct futex_hash_bucket *futex_hash_private(union futex_key *key,
 	return &fhb[hash & hash_mask];
 }
 
+#ifndef CONFIG_BASE_SMALL
 static void futex_rehash_current_users(struct futex_private_hash *old,
 				       struct futex_private_hash *new)
 {
@@ -256,6 +257,14 @@ static struct futex_private_hash *futex_get_private_hb(union futex_key *key)
 	return futex_get_private_hash();
 }
 
+#else
+
+static struct futex_private_hash *futex_get_private_hb(union futex_key *key)
+{
+	return NULL;
+}
+#endif
+
 /**
  * futex_hash - Return the hash bucket in the global hash
  * @key:	Pointer to the futex key for which the hash is calculated
@@ -279,6 +288,7 @@ struct futex_hash_bucket *__futex_hash(union futex_key *key)
 	return &futex_queues[hash & futex_hashmask];
 }
 
+#ifndef CONFIG_BASE_SMALL
 bool futex_put_private_hash(struct futex_private_hash *hb_p)
 {
 	bool released;
@@ -315,6 +325,7 @@ void futex_hash_put(struct futex_hash_bucket *hb)
 		return;
 	futex_put_private_hash(hb_p);
 }
+#endif
 
 /**
  * futex_setup_timer - set up the sleeping hrtimer.
@@ -1366,12 +1377,15 @@ void futex_exit_release(struct task_struct *tsk)
 static void futex_hash_bucket_init(struct futex_hash_bucket *fhb,
 				   struct futex_private_hash *hb_p)
 {
+#ifndef CONFIG_BASE_SMALL
 	fhb->hb_p = hb_p;
+#endif
 	atomic_set(&fhb->waiters, 0);
 	plist_head_init(&fhb->chain);
 	spin_lock_init(&fhb->lock);
 }
 
+#ifndef CONFIG_BASE_SMALL
 void futex_hash_free(struct mm_struct *mm)
 {
 	struct futex_private_hash *hb_p;
@@ -1404,10 +1418,7 @@ static int futex_hash_allocate(unsigned int hash_slots)
 
 	if (hash_slots == 0)
 		hash_slots = 16;
-	if (hash_slots < 2)
-		hash_slots = 2;
-	if (hash_slots > 131072)
-		hash_slots = 131072;
+	hash_slots = clamp(hash_slots, 2, futex_hashmask + 1);
 	if (!is_power_of_2(hash_slots))
 		hash_slots = rounddown_pow_of_two(hash_slots);
 
@@ -1449,7 +1460,30 @@ static int futex_hash_allocate(unsigned int hash_slots)
 
 int futex_hash_allocate_default(void)
 {
-	return futex_hash_allocate(0);
+	unsigned int threads, buckets, current_buckets = 0;
+	struct futex_private_hash *hb_p;
+
+	if (!current->mm)
+		return 0;
+
+	scoped_guard(rcu) {
+		threads = min_t(unsigned int, get_nr_threads(current), num_online_cpus());
+		hb_p = rcu_dereference(current->mm->futex_phash);
+		if (hb_p)
+			current_buckets = hb_p->hash_mask + 1;
+	}
+
+	/*
+	 * The default allocation will remain within
+	 *   16 <= threads * 4 <= global hash size
+	 */
+	buckets = roundup_pow_of_two(4 * threads);
+	buckets = clamp(buckets, 16, futex_hashmask + 1);
+
+	if (current_buckets >= buckets)
+		return 0;
+
+	return futex_hash_allocate(buckets);
 }
 
 static int futex_hash_get_slots(void)
@@ -1462,6 +1496,19 @@ static int futex_hash_get_slots(void)
 		return hb_p->hash_mask + 1;
 	return 0;
 }
+
+#else
+
+static int futex_hash_allocate(unsigned int hash_slots)
+{
+	return -EINVAL;
+}
+
+static int futex_hash_get_slots(void)
+{
+	return 0;
+}
+#endif
 
 int futex_hash_prctl(unsigned long arg2, unsigned long arg3)
 {

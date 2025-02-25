@@ -2141,9 +2141,7 @@ static bool need_futex_hash_allocate_default(u64 clone_flags)
 {
 	if ((clone_flags & (CLONE_THREAD | CLONE_VM)) != (CLONE_THREAD | CLONE_VM))
 		return false;
-	if (!thread_group_empty(current))
-		return false;
-	return futex_hash_requires_allocation();
+	return true;
 }
 
 /*

@@ -78,6 +78,13 @@ void futex_exec_release(struct task_struct *tsk);
 long do_futex(u32 __user *uaddr, int op, u32 val, ktime_t *timeout,
 	      u32 __user *uaddr2, u32 val2, u32 val3);
 int futex_hash_prctl(unsigned long arg2, unsigned long arg3);
+
+#ifdef CONFIG_BASE_SMALL
+static inline int futex_hash_allocate_default(void) { return 0; }
+static inline void futex_hash_free(struct mm_struct *mm) { }
+static inline void futex_mm_init(struct mm_struct *mm) { }
+#else /* !CONFIG_BASE_SMALL */
+
 int futex_hash_allocate_default(void);
 void futex_hash_free(struct mm_struct *mm);
 
@@ -87,14 +94,9 @@ static inline void futex_mm_init(struct mm_struct *mm)
 	mutex_init(&mm->futex_hash_lock);
 }
 
-static inline bool futex_hash_requires_allocation(void)
-{
-	if (current->mm->futex_phash)
-		return false;
-	return true;
-}
+#endif /* CONFIG_BASE_SMALL */
 
-#else
+#else /* !CONFIG_FUTEX */
 static inline void futex_init_task(struct task_struct *tsk) { }
 static inline void futex_exit_recursive(struct task_struct *tsk) { }
 static inline void futex_exit_release(struct task_struct *tsk) { }
@@ -115,11 +117,6 @@ static inline int futex_hash_allocate_default(void)
 }
 static inline void futex_hash_free(struct mm_struct *mm) { }
 static inline void futex_mm_init(struct mm_struct *mm) { }
-
-static inline bool futex_hash_requires_allocation(void)
-{
-	return false;
-}
 
 #endif
 

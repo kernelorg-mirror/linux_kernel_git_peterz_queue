@@ -205,10 +205,18 @@ futex_setup_timer(ktime_t *time, struct hrtimer_sleeper *timeout,
 		  int flags, u64 range_ns);
 
 extern struct futex_hash_bucket *__futex_hash(union futex_key *key);
+#ifdef CONFIG_BASE_SMALL
+static inline void futex_hash_get(struct futex_hash_bucket *hb) { }
+static inline void futex_hash_put(struct futex_hash_bucket *hb) { }
+static inline struct futex_private_hash *futex_get_private_hash(void) { return NULL; }
+static inline bool futex_put_private_hash(struct futex_private_hash *hb_p) { return false; }
+
+#else /* !CONFIG_BASE_SMALL */
 extern void futex_hash_get(struct futex_hash_bucket *hb);
 extern void futex_hash_put(struct futex_hash_bucket *hb);
 extern struct futex_private_hash *futex_get_private_hash(void);
 extern bool futex_put_private_hash(struct futex_private_hash *hb_p);
+#endif
 
 DEFINE_CLASS(hb, struct futex_hash_bucket *,
 	     if (_T) futex_hash_put(_T),
