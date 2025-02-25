@@ -152,6 +152,17 @@ struct futex_hash_bucket *__futex_hash(union futex_key *key)
 	return &futex_queues[hash & futex_hashmask];
 }
 
+/**
+ * futex_hash_get - Get an additional reference for the local hash.
+ * @hb:		    ptr to the private local hash.
+ *
+ * Obtain an additional reference for the already obtained hash bucket. The
+ * caller must already own an reference.
+ */
+void futex_hash_get(struct futex_hash_bucket *hb)
+{
+}
+
 void futex_hash_put(struct futex_hash_bucket *hb) { }
 
 /**
@@ -630,6 +641,39 @@ retry:
 	}
 
 	return ret;
+}
+
+void futex_q_lockptr_lock(struct futex_q *q)
+{
+#if 0
+	struct futex_hash_bucket *hb;
+#endif
+	spinlock_t *lock_ptr;
+
+	/*
+	 * See futex_unqueue() why lock_ptr can change.
+	 */
+	guard(rcu)();
+retry:
+	lock_ptr = READ_ONCE(q->lock_ptr);
+	spin_lock(lock_ptr);
+
+	if (unlikely(lock_ptr != q->lock_ptr)) {
+		spin_unlock(lock_ptr);
+		goto retry;
+	}
+#if 0
+	hb = container_of(lock_ptr, struct futex_hash_bucket, lock);
+	/*
+	 * The caller needs to either hold a reference on the hash (to ensure
+	 * that the hash is not resized) _or_ be enqueued on the hash. This
+	 * ensures that futex_q::lock_ptr is updated while moved to the new
+	 * hash during resize.
+	 * Once the hash bucket is locked the resize operation, which might be
+	 * in progress, will block on the lock.
+	 */
+	return hb;
+#endif
 }
 
 /*
