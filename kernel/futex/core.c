@@ -40,6 +40,7 @@
 #include <linux/fault-inject.h>
 #include <linux/slab.h>
 #include <linux/prctl.h>
+#include <linux/rcuref.h>
 
 #include "futex.h"
 #include "../locking/rtmutex_common.h"
@@ -56,6 +57,14 @@ static struct {
 #define futex_queues   (__futex_data.queues)
 #define futex_hashmask (__futex_data.hashmask)
 
+struct futex_private_hash {
+	rcuref_t	users;
+	unsigned int	hash_mask;
+	struct rcu_head	rcu;
+	bool		initial_ref_dropped;
+	bool		released;
+	struct futex_hash_bucket queues[];
+};
 
 /*
  * Fault injections for futexes.
@@ -129,9 +138,122 @@ static struct futex_hash_bucket *futex_hash_private(union futex_key *key,
 	return &fhb[hash & hash_mask];
 }
 
+static void futex_rehash_current_users(struct futex_private_hash *old,
+				       struct futex_private_hash *new)
+{
+	struct futex_hash_bucket *hb_old, *hb_new;
+	unsigned int slots = old->hash_mask + 1;
+	u32 hash_mask = new->hash_mask;
+	unsigned int i;
+
+	for (i = 0; i < slots; i++) {
+		struct futex_q *this, *tmp;
+
+		hb_old = &old->queues[i];
+
+		spin_lock(&hb_old->lock);
+		plist_for_each_entry_safe(this, tmp, &hb_old->chain, list) {
+
+			plist_del(&this->list, &hb_old->chain);
+			futex_hb_waiters_dec(hb_old);
+
+			WARN_ON_ONCE(this->lock_ptr != &hb_old->lock);
+
+			hb_new = futex_hash_private(&this->key, new->queues, hash_mask);
+			futex_hb_waiters_inc(hb_new);
+			/*
+			 * The new pointer isn't published yet but an already
+			 * moved user can be unqueued due to timeout or signal.
+			 */
+			spin_lock_nested(&hb_new->lock, SINGLE_DEPTH_NESTING);
+			plist_add(&this->list, &hb_new->chain);
+			this->lock_ptr = &hb_new->lock;
+			spin_unlock(&hb_new->lock);
+		}
+		spin_unlock(&hb_old->lock);
+	}
+}
+
+static void futex_assign_new_hash(struct futex_private_hash *hb_p_new,
+				  struct mm_struct *mm)
+{
+	bool drop_init_ref = hb_p_new != NULL;
+	struct futex_private_hash *hb_p;
+
+	if (!hb_p_new) {
+		hb_p_new = mm->futex_phash_new;
+		mm->futex_phash_new = NULL;
+	}
+	/* Someone was quicker, the current mask is valid */
+	if (!hb_p_new)
+		return;
+
+	hb_p = rcu_dereference_check(mm->futex_phash,
+				     lockdep_is_held(&mm->futex_hash_lock));
+	if (hb_p) {
+		if (hb_p->hash_mask >= hb_p_new->hash_mask) {
+			/* It was increased again while we were waiting */
+			kvfree(hb_p_new);
+			return;
+		}
+		/*
+		 * If the caller started the resize then the initial reference
+		 * needs to be dropped. If the object can not be deconstructed
+		 * we save hb_p_new for later and ensure the reference counter
+		 * is not dropped again.
+		 */
+		if (drop_init_ref &&
+		    (hb_p->initial_ref_dropped || !futex_put_private_hash(hb_p))) {
+			mm->futex_phash_new = hb_p_new;
+			hb_p->initial_ref_dropped = true;
+			return;
+		}
+		if (!READ_ONCE(hb_p->released)) {
+			mm->futex_phash_new = hb_p_new;
+			return;
+		}
+
+		futex_rehash_current_users(hb_p, hb_p_new);
+	}
+	rcu_assign_pointer(mm->futex_phash, hb_p_new);
+	kvfree_rcu(hb_p, rcu);
+}
+
 struct futex_private_hash *futex_get_private_hash(void)
 {
-	return NULL;
+	struct mm_struct *mm = current->mm;
+	/*
+	 * Ideally we don't loop. If there is a replacement in progress
+	 * then a new private hash is already prepared and a reference can't be
+	 * obtained once the last user dropped it's.
+	 * In that case we block on mm_struct::futex_hash_lock and either have
+	 * to perform the replacement or wait while someone else is doing the
+	 * job. Eitherway, on the second iteration we acquire a reference on the
+	 * new private hash or loop again because a new replacement has been
+	 * requested.
+	 */
+again:
+	scoped_guard(rcu) {
+		struct futex_private_hash *hb_p;
+
+		hb_p = rcu_dereference(mm->futex_phash);
+		if (!hb_p)
+			return NULL;
+
+		if (rcuref_get(&hb_p->users))
+			return hb_p;
+	}
+	scoped_guard(mutex, &current->mm->futex_hash_lock)
+		futex_assign_new_hash(NULL, mm);
+	goto again;
+}
+
+static struct futex_private_hash *futex_get_private_hb(union futex_key *key)
+{
+	if (!futex_key_is_private(key))
+		return NULL;
+
+	return futex_get_private_hash();
 }
 
 /**
@@ -144,12 +266,12 @@ struct futex_private_hash *futex_get_private_hash(void)
  */
 struct futex_hash_bucket *__futex_hash(union futex_key *key)
 {
-	struct futex_hash_bucket *fhb;
+	struct futex_private_hash *hb_p;
 	u32 hash;
 
-	fhb = current->mm->futex_hash_bucket;
-	if (fhb && futex_key_is_private(key))
-		return futex_hash_private(key, fhb, current->mm->futex_hash_mask);
+	hb_p = futex_get_private_hb(key);
+	if (hb_p)
+		return futex_hash_private(key, hb_p->queues, hb_p->hash_mask);
 
 	hash = jhash2((u32 *)key,
 		      offsetof(typeof(*key), both.offset) / 4,
@@ -159,7 +281,13 @@ struct futex_hash_bucket *__futex_hash(union futex_key *key)
 
 bool futex_put_private_hash(struct futex_private_hash *hb_p)
 {
-	return false;
+	bool released;
+
+	guard(preempt)();
+	released = rcuref_put_rcusafe(&hb_p->users);
+	if (released)
+		WRITE_ONCE(hb_p->released, true);
+	return released;
 }
 
 /**
@@ -171,9 +299,22 @@ bool futex_put_private_hash(struct futex_private_hash *hb_p)
  */
 void futex_hash_get(struct futex_hash_bucket *hb)
 {
+	struct futex_private_hash *hb_p = hb->hb_p;
+
+	if (!hb_p)
+		return;
+
+	WARN_ON_ONCE(!rcuref_get(&hb_p->users));
 }
 
-void futex_hash_put(struct futex_hash_bucket *hb) { }
+void futex_hash_put(struct futex_hash_bucket *hb)
+{
+	struct futex_private_hash *hb_p = hb->hb_p;
+
+	if (!hb_p)
+		return;
+	futex_put_private_hash(hb_p);
+}
 
 /**
  * futex_setup_timer - set up the sleeping hrtimer.
@@ -615,6 +756,8 @@ int futex_unqueue(struct futex_q *q)
 	spinlock_t *lock_ptr;
 	int ret = 0;
 
+	/* RCU so lock_ptr is not going away during locking. */
+	guard(rcu)();
 	/* In the common case we don't take the spinlock, which is nice. */
 retry:
 	/*
@@ -1028,9 +1171,21 @@ static void compat_exit_robust_list(struct task_struct *curr)
 static void exit_pi_state_list(struct task_struct *curr)
 {
 	struct list_head *next, *head = &curr->pi_state_list;
+	struct futex_private_hash *hb_p;
 	struct futex_pi_state *pi_state;
 	union futex_key key = FUTEX_KEY_INIT;
 
+	/*
+	 * The mutex mm_struct::futex_hash_lock might be acquired.
+	 */
+	might_sleep();
+	/*
+	 * Ensure the hash remains stable (no resize) during the while loop
+	 * below. The hb pointer is acquired under the pi_lock so we can't block
+	 * on the mutex.
+	 */
+	WARN_ON(curr != current);
+	hb_p = futex_get_private_hash();
 	/*
 	 * We are a ZOMBIE and nobody can enqueue itself on
 	 * pi_state_list anymore, but we have to be careful
@@ -1093,6 +1248,8 @@ static void exit_pi_state_list(struct task_struct *curr)
 		raw_spin_lock_irq(&curr->pi_lock);
 	}
 	raw_spin_unlock_irq(&curr->pi_lock);
+	if (hb_p)
+		futex_put_private_hash(hb_p);
 }
 #else
 static inline void exit_pi_state_list(struct task_struct *curr) { }
@@ -1206,8 +1363,10 @@ void futex_exit_release(struct task_struct *tsk)
 	futex_cleanup_end(tsk, FUTEX_STATE_DEAD);
 }
 
-static void futex_hash_bucket_init(struct futex_hash_bucket *fhb)
+static void futex_hash_bucket_init(struct futex_hash_bucket *fhb,
+				   struct futex_private_hash *hb_p)
 {
+	fhb->hb_p = hb_p;
 	atomic_set(&fhb->waiters, 0);
 	plist_head_init(&fhb->chain);
 	spin_lock_init(&fhb->lock);
@@ -1215,19 +1374,33 @@ static void futex_hash_bucket_init(struct futex_hash_bucket *fhb)
 
 void futex_hash_free(struct mm_struct *mm)
 {
-	kvfree(mm->futex_hash_bucket);
+	struct futex_private_hash *hb_p;
+
+	kvfree(mm->futex_phash_new);
+	/*
+	 * The mm_struct belonging to the task is about to be removed so all
+	 * threads, that ever accessed the private hash, are gone and the
+	 * pointer can be accessed directly (omitting a RCU-read section or
+	 * lock).
+	 * Since there can not be a thread holding a reference to the private
+	 * hash we free it immediately.
+	 */
+	hb_p = rcu_dereference_raw(mm->futex_phash);
+	if (!hb_p)
+		return;
+
+	if (!hb_p->initial_ref_dropped && WARN_ON(!futex_put_private_hash(hb_p)))
+		return;
+
+	kvfree(hb_p);
 }
 
 static int futex_hash_allocate(unsigned int hash_slots)
 {
-	struct futex_hash_bucket *fhb;
+	struct futex_private_hash *hb_p, *hb_tofree = NULL;
+	struct mm_struct *mm = current->mm;
+	size_t alloc_size;
 	int i;
-
-	if (current->mm->futex_hash_bucket)
-		return -EALREADY;
-
-	if (!thread_group_leader(current))
-		return -EINVAL;
 
 	if (hash_slots == 0)
 		hash_slots = 16;
@@ -1238,16 +1411,39 @@ static int futex_hash_allocate(unsigned int hash_slots)
 	if (!is_power_of_2(hash_slots))
 		hash_slots = rounddown_pow_of_two(hash_slots);
 
-	fhb = kvmalloc_array(hash_slots, sizeof(struct futex_hash_bucket), GFP_KERNEL_ACCOUNT);
-	if (!fhb)
+	if (unlikely(check_mul_overflow(hash_slots, sizeof(struct futex_hash_bucket),
+					&alloc_size)))
 		return -ENOMEM;
 
-	current->mm->futex_hash_mask = hash_slots - 1;
+	if (unlikely(check_add_overflow(alloc_size, sizeof(struct futex_private_hash),
+					&alloc_size)))
+		return -ENOMEM;
+
+	hb_p = kvmalloc(alloc_size, GFP_KERNEL_ACCOUNT);
+	if (!hb_p)
+		return -ENOMEM;
+
+	rcuref_init(&hb_p->users, 1);
+	hb_p->initial_ref_dropped = false;
+	hb_p->released = false;
+	hb_p->hash_mask = hash_slots - 1;
 
 	for (i = 0; i < hash_slots; i++)
-		futex_hash_bucket_init(&fhb[i]);
+		futex_hash_bucket_init(&hb_p->queues[i], hb_p);
 
-	current->mm->futex_hash_bucket = fhb;
+	scoped_guard(mutex, &mm->futex_hash_lock) {
+		if (mm->futex_phash_new) {
+			if (mm->futex_phash_new->hash_mask <= hb_p->hash_mask) {
+				hb_tofree = mm->futex_phash_new;
+			} else {
+				hb_tofree = hb_p;
+				hb_p = mm->futex_phash_new;
+			}
+			mm->futex_phash_new = NULL;
+		}
+		futex_assign_new_hash(hb_p, mm);
+	}
+	kvfree(hb_tofree);
 	return 0;
 }
 
@@ -1258,8 +1454,12 @@ int futex_hash_allocate_default(void)
 
 static int futex_hash_get_slots(void)
 {
-	if (current->mm->futex_hash_bucket)
-		return current->mm->futex_hash_mask + 1;
+	struct futex_private_hash *hb_p;
+
+	guard(rcu)();
+	hb_p = rcu_dereference(current->mm->futex_phash);
+	if (hb_p)
+		return hb_p->hash_mask + 1;
 	return 0;
 }
 
@@ -1301,7 +1501,7 @@ static int __init futex_init(void)
 	hashsize = 1UL << futex_shift;
 
 	for (i = 0; i < hashsize; i++)
-		futex_hash_bucket_init(&futex_queues[i]);
+		futex_hash_bucket_init(&futex_queues[i], 0);
 
 	futex_hashmask = hashsize - 1;
 	return 0;

@@ -83,12 +83,13 @@ void futex_hash_free(struct mm_struct *mm);
 
 static inline void futex_mm_init(struct mm_struct *mm)
 {
-	mm->futex_hash_bucket = NULL;
+	rcu_assign_pointer(mm->futex_phash, NULL);
+	mutex_init(&mm->futex_hash_lock);
 }
 
 static inline bool futex_hash_requires_allocation(void)
 {
-	if (current->mm->futex_hash_bucket)
+	if (current->mm->futex_phash)
 		return false;
 	return true;
 }

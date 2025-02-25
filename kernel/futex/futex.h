@@ -118,6 +118,7 @@ struct futex_hash_bucket {
 	atomic_t waiters;
 	spinlock_t lock;
 	struct plist_head chain;
+	struct futex_private_hash *hb_p;
 } ____cacheline_aligned_in_smp;
 
 /*
