@@ -129,6 +129,11 @@ static struct futex_hash_bucket *futex_hash_private(union futex_key *key,
 	return &fhb[hash & hash_mask];
 }
 
+struct futex_private_hash *futex_get_private_hash(void)
+{
+	return NULL;
+}
+
 /**
  * futex_hash - Return the hash bucket in the global hash
  * @key:	Pointer to the futex key for which the hash is calculated
@@ -150,6 +155,11 @@ struct futex_hash_bucket *__futex_hash(union futex_key *key)
 		      offsetof(typeof(*key), both.offset) / 4,
 		      key->both.offset);
 	return &futex_queues[hash & futex_hashmask];
+}
+
+bool futex_put_private_hash(struct futex_private_hash *hb_p)
+{
+	return false;
 }
 
 /**

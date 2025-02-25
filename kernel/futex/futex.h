@@ -206,6 +206,8 @@ futex_setup_timer(ktime_t *time, struct hrtimer_sleeper *timeout,
 extern struct futex_hash_bucket *__futex_hash(union futex_key *key);
 extern void futex_hash_get(struct futex_hash_bucket *hb);
 extern void futex_hash_put(struct futex_hash_bucket *hb);
+extern struct futex_private_hash *futex_get_private_hash(void);
+extern bool futex_put_private_hash(struct futex_private_hash *hb_p);
 
 DEFINE_CLASS(hb, struct futex_hash_bucket *,
 	     if (_T) futex_hash_put(_T),

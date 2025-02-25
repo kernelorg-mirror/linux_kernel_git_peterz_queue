@@ -385,7 +385,7 @@ int futex_unqueue_multiple(struct futex_vector *v, int count)
 }
 
 /**
- * futex_wait_multiple_setup - Prepare to wait and enqueue multiple futexes
+ * __futex_wait_multiple_setup - Prepare to wait and enqueue multiple futexes
  * @vs:		The futex list to wait on
  * @count:	The size of the list
  * @woken:	Index of the last woken futex, if any. Used to notify the
@@ -400,7 +400,7 @@ int futex_unqueue_multiple(struct futex_vector *v, int count)
  *  -  0 - Success
  *  - <0 - -EFAULT, -EWOULDBLOCK or -EINVAL
  */
-int futex_wait_multiple_setup(struct futex_vector *vs, int count, int *woken)
+static int __futex_wait_multiple_setup(struct futex_vector *vs, int count, int *woken)
 {
 	bool retry = false;
 	int ret, i;
@@ -489,6 +489,23 @@ retry:
 	}
 
 	return 0;
+}
+
+int futex_wait_multiple_setup(struct futex_vector *vs, int count, int *woken)
+{
+	struct futex_private_hash *hb_p;
+	int ret;
+
+	/*
+	 * Assume to have a private futex and acquire a reference on the private
+	 * hash to avoid blocking on mm_struct::futex_hash_bucket during rehash
+	 * after changing the task state.
+	 */
+	hb_p = futex_get_private_hash();
+	ret = __futex_wait_multiple_setup(vs, count, woken);
+	if (hb_p)
+		futex_put_private_hash(hb_p);
+	return ret;
 }
 
 /**
