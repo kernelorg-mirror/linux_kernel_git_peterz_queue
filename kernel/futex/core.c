@@ -61,8 +61,6 @@ struct futex_private_hash {
 	rcuref_t	users;
 	unsigned int	hash_mask;
 	struct rcu_head	rcu;
-	bool		initial_ref_dropped;
-	bool		released;
 	struct futex_hash_bucket queues[];
 };
 
@@ -175,49 +173,32 @@ static void futex_rehash_current_users(struct futex_private_hash *old,
 	}
 }
 
-static void futex_assign_new_hash(struct futex_private_hash *new,
-				  struct mm_struct *mm)
+static bool futex_assign_new_hash(struct mm_struct *mm,
+				  struct futex_private_hash *new)
 {
-	bool drop_init_ref = new != NULL;
 	struct futex_private_hash *fph;
 
-	if (!new) {
-		new = mm->futex_phash_new;
-		mm->futex_phash_new = NULL;
-	}
-	/* Someone was quicker, the current mask is valid */
-	if (!new)
-		return;
+	lockdep_assert_held(&mm->futex_hash_lock);
+	WARN_ON_ONCE(mm->futex_phash_new);
 
-	fph = rcu_dereference_check(mm->futex_phash,
-				     lockdep_is_held(&mm->futex_hash_lock));
+	fph = mm->futex_phash;
 	if (fph) {
 		if (fph->hash_mask >= new->hash_mask) {
 			/* It was increased again while we were waiting */
 			kvfree(new);
-			return;
+			return true;
 		}
-		/*
-		 * If the caller started the resize then the initial reference
-		 * needs to be dropped. If the object can not be deconstructed
-		 * we save new for later and ensure the reference counter
-		 * is not dropped again.
-		 */
-		if (drop_init_ref &&
-		    (fph->initial_ref_dropped || !futex_put_private_hash(fph))) {
+
+		if (rcuref_read(&fph->users) != 0) {
 			mm->futex_phash_new = new;
-			fph->initial_ref_dropped = true;
-			return;
-		}
-		if (!READ_ONCE(fph->released)) {
-			mm->futex_phash_new = new;
-			return;
+			return false;
 		}
 
 		futex_rehash_current_users(fph, new);
 	}
 	rcu_assign_pointer(mm->futex_phash, new);
 	kvfree_rcu(fph, rcu);
+	return true;
 }
 
 struct futex_private_hash *futex_get_private_hash(void)
@@ -244,9 +225,21 @@ again:
 		if (rcuref_get(&fph->users))
 			return fph;
 	}
-	scoped_guard(mutex, &current->mm->futex_hash_lock)
-		futex_assign_new_hash(NULL, mm);
+	scoped_guard (mutex, &mm->futex_hash_lock) {
+		struct futex_private_hash *fph;
+
+		fph = mm->futex_phash_new;
+		if (fph) {
+			mm->futex_phash_new = NULL;
+			futex_assign_new_hash(mm, fph);
+		}
+	}
 	goto again;
+}
+
+void futex_put_private_hash(struct futex_private_hash *fph)
+{
+	(void)rcuref_put(&fph->users);
 }
 
 static struct futex_private_hash *futex_get_private_hb(union futex_key *key)
@@ -289,17 +282,6 @@ struct futex_hash_bucket *__futex_hash(union futex_key *key)
 }
 
 #ifndef CONFIG_BASE_SMALL
-bool futex_put_private_hash(struct futex_private_hash *fph)
-{
-	bool released;
-
-	guard(preempt)();
-	released = rcuref_put_rcusafe(&fph->users);
-	if (released)
-		WRITE_ONCE(fph->released, true);
-	return released;
-}
-
 /**
  * futex_hash_get - Get an additional reference for the local hash.
  * @hb:		    ptr to the private local hash.
@@ -1388,25 +1370,8 @@ static void futex_hash_bucket_init(struct futex_hash_bucket *fhb,
 #ifndef CONFIG_BASE_SMALL
 void futex_hash_free(struct mm_struct *mm)
 {
-	struct futex_private_hash *fph;
-
 	kvfree(mm->futex_phash_new);
-	/*
-	 * The mm_struct belonging to the task is about to be removed so all
-	 * threads, that ever accessed the private hash, are gone and the
-	 * pointer can be accessed directly (omitting a RCU-read section or
-	 * lock).
-	 * Since there can not be a thread holding a reference to the private
-	 * hash we free it immediately.
-	 */
-	fph = rcu_dereference_raw(mm->futex_phash);
-	if (!fph)
-		return;
-
-	if (!fph->initial_ref_dropped && WARN_ON(!futex_put_private_hash(fph)))
-		return;
-
-	kvfree(fph);
+	kvfree(mm->futex_phash);
 }
 
 static int futex_hash_allocate(unsigned int hash_slots)
@@ -1435,15 +1400,29 @@ static int futex_hash_allocate(unsigned int hash_slots)
 		return -ENOMEM;
 
 	rcuref_init(&fph->users, 1);
-	fph->initial_ref_dropped = false;
-	fph->released = false;
 	fph->hash_mask = hash_slots - 1;
 
 	for (i = 0; i < hash_slots; i++)
 		futex_hash_bucket_init(&fph->queues[i], fph);
 
 	scoped_guard(mutex, &mm->futex_hash_lock) {
+		if (mm->futex_phash && !mm->futex_phash_new) {
+			/*
+			 * If we have an existing hash, but do not yet have
+			 * allocated a replacement hash, drop the initial
+			 * reference on the existing hash.
+			 *
+			 * Ignore the return value; removal is serialized by
+			 * mm->futex_hash_lock which we currently hold.
+			 */
+			(void)rcuref_put(&mm->futex_phash->users);
+		}
+
 		if (mm->futex_phash_new) {
+			/*
+			 * If we already have a replacement hash pending;
+			 * keep the larger hash.
+			 */
 			if (mm->futex_phash_new->hash_mask <= fph->hash_mask) {
 				hb_tofree = mm->futex_phash_new;
 			} else {
@@ -1452,7 +1431,12 @@ static int futex_hash_allocate(unsigned int hash_slots)
 			}
 			mm->futex_phash_new = NULL;
 		}
-		futex_assign_new_hash(fph, mm);
+
+		/*
+		 * Will set mm->futex_phash_new on failure;
+		 * futex_get_private_hash() will try again.
+		 */
+		futex_assign_new_hash(mm, fph);
 	}
 	kvfree(hb_tofree);
 	return 0;
