@@ -400,11 +400,17 @@ int futex_unqueue_multiple(struct futex_vector *v, int count)
  *  -  0 - Success
  *  - <0 - -EFAULT, -EWOULDBLOCK or -EINVAL
  */
-static int __futex_wait_multiple_setup(struct futex_vector *vs, int count, int *woken)
+int futex_wait_multiple_setup(struct futex_vector *vs, int count, int *woken)
 {
 	bool retry = false;
 	int ret, i;
 	u32 uval;
+
+	/*
+	 * Make sure to have a reference on the private_hash such that we
+	 * don't block on rehash after changing the task state below.
+	 */
+	guard(private_hash)();
 
 	/*
 	 * Enqueuing multiple futexes is tricky, because we need to enqueue
@@ -489,23 +495,6 @@ retry:
 	}
 
 	return 0;
-}
-
-int futex_wait_multiple_setup(struct futex_vector *vs, int count, int *woken)
-{
-	struct futex_private_hash *fph;
-	int ret;
-
-	/*
-	 * Assume to have a private futex and acquire a reference on the private
-	 * hash to avoid blocking on mm_struct::futex_hash_bucket during rehash
-	 * after changing the task state.
-	 */
-	fph = futex_get_private_hash();
-	ret = __futex_wait_multiple_setup(vs, count, woken);
-	if (fph)
-		futex_put_private_hash(fph);
-	return ret;
 }
 
 /**

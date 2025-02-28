@@ -204,23 +204,37 @@ extern struct hrtimer_sleeper *
 futex_setup_timer(ktime_t *time, struct hrtimer_sleeper *timeout,
 		  int flags, u64 range_ns);
 
-extern struct futex_hash_bucket *__futex_hash(union futex_key *key);
-#ifdef CONFIG_BASE_SMALL
-static inline void futex_hash_get(struct futex_hash_bucket *hb) { }
-static inline void futex_hash_put(struct futex_hash_bucket *hb) { }
-static inline struct futex_private_hash *futex_get_private_hash(void) { return NULL; }
-static inline void futex_put_private_hash(struct futex_private_hash *fph) { }
+extern struct futex_hash_bucket *futex_hash(union futex_key *key);
 
-#else /* !CONFIG_BASE_SMALL */
+#ifndef CONFIG_BASE_SMALL
 extern void futex_hash_get(struct futex_hash_bucket *hb);
 extern void futex_hash_put(struct futex_hash_bucket *hb);
-extern struct futex_private_hash *futex_get_private_hash(void);
-extern void futex_put_private_hash(struct futex_private_hash *fph);
+
+extern struct futex_private_hash *futex_private_hash(void);
+extern bool futex_private_hash_get(struct futex_private_hash *fph);
+extern void futex_private_hash_put(struct futex_private_hash *fph);
+#else
+static inline void futex_hash_get(struct futex_hash_bucket *hb) { }
+static inline void futex_hash_put(struct futex_hash_bucket *hb) { }
+
+static inline struct futex_private_hash *futex_private_hash(void)
+{
+	return NULL;
+}
+static inline bool futex_private_hash_get(struct futex_private_hash *fph)
+{
+	return false;
+}
+static inline void futex_private_hash_put(struct futex_private_hash *fph) { }
 #endif
 
 DEFINE_CLASS(hb, struct futex_hash_bucket *,
 	     if (_T) futex_hash_put(_T),
-	     __futex_hash(key), union futex_key *key);
+	     futex_hash(key), union futex_key *key);
+
+DEFINE_CLASS(private_hash, struct futex_private_hash *,
+	     if (_T) futex_private_hash_put(_T),
+	     futex_private_hash(), void);
 
 /**
  * futex_match - Check whether two futex keys are equal
