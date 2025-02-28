@@ -1501,7 +1501,7 @@ static int futex_hash_get_slots(void)
 
 static int futex_hash_allocate(unsigned int hash_slots)
 {
-	return -EINVAL;
+	return 0;
 }
 
 static int futex_hash_get_slots(void)
