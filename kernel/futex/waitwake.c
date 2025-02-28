@@ -493,7 +493,7 @@ retry:
 
 int futex_wait_multiple_setup(struct futex_vector *vs, int count, int *woken)
 {
-	struct futex_private_hash *hb_p;
+	struct futex_private_hash *fph;
 	int ret;
 
 	/*
@@ -501,10 +501,10 @@ int futex_wait_multiple_setup(struct futex_vector *vs, int count, int *woken)
 	 * hash to avoid blocking on mm_struct::futex_hash_bucket during rehash
 	 * after changing the task state.
 	 */
-	hb_p = futex_get_private_hash();
+	fph = futex_get_private_hash();
 	ret = __futex_wait_multiple_setup(vs, count, woken);
-	if (hb_p)
-		futex_put_private_hash(hb_p);
+	if (fph)
+		futex_put_private_hash(fph);
 	return ret;
 }
 

@@ -175,49 +175,49 @@ static void futex_rehash_current_users(struct futex_private_hash *old,
 	}
 }
 
-static void futex_assign_new_hash(struct futex_private_hash *hb_p_new,
+static void futex_assign_new_hash(struct futex_private_hash *new,
 				  struct mm_struct *mm)
 {
-	bool drop_init_ref = hb_p_new != NULL;
-	struct futex_private_hash *hb_p;
+	bool drop_init_ref = new != NULL;
+	struct futex_private_hash *fph;
 
-	if (!hb_p_new) {
-		hb_p_new = mm->futex_phash_new;
+	if (!new) {
+		new = mm->futex_phash_new;
 		mm->futex_phash_new = NULL;
 	}
 	/* Someone was quicker, the current mask is valid */
-	if (!hb_p_new)
+	if (!new)
 		return;
 
-	hb_p = rcu_dereference_check(mm->futex_phash,
+	fph = rcu_dereference_check(mm->futex_phash,
 				     lockdep_is_held(&mm->futex_hash_lock));
-	if (hb_p) {
-		if (hb_p->hash_mask >= hb_p_new->hash_mask) {
+	if (fph) {
+		if (fph->hash_mask >= new->hash_mask) {
 			/* It was increased again while we were waiting */
-			kvfree(hb_p_new);
+			kvfree(new);
 			return;
 		}
 		/*
 		 * If the caller started the resize then the initial reference
 		 * needs to be dropped. If the object can not be deconstructed
-		 * we save hb_p_new for later and ensure the reference counter
+		 * we save new for later and ensure the reference counter
 		 * is not dropped again.
 		 */
 		if (drop_init_ref &&
-		    (hb_p->initial_ref_dropped || !futex_put_private_hash(hb_p))) {
-			mm->futex_phash_new = hb_p_new;
-			hb_p->initial_ref_dropped = true;
+		    (fph->initial_ref_dropped || !futex_put_private_hash(fph))) {
+			mm->futex_phash_new = new;
+			fph->initial_ref_dropped = true;
 			return;
 		}
-		if (!READ_ONCE(hb_p->released)) {
-			mm->futex_phash_new = hb_p_new;
+		if (!READ_ONCE(fph->released)) {
+			mm->futex_phash_new = new;
 			return;
 		}
 
-		futex_rehash_current_users(hb_p, hb_p_new);
+		futex_rehash_current_users(fph, new);
 	}
-	rcu_assign_pointer(mm->futex_phash, hb_p_new);
-	kvfree_rcu(hb_p, rcu);
+	rcu_assign_pointer(mm->futex_phash, new);
+	kvfree_rcu(fph, rcu);
 }
 
 struct futex_private_hash *futex_get_private_hash(void)
@@ -235,14 +235,14 @@ struct futex_private_hash *futex_get_private_hash(void)
 	 */
 again:
 	scoped_guard(rcu) {
-		struct futex_private_hash *hb_p;
+		struct futex_private_hash *fph;
 
-		hb_p = rcu_dereference(mm->futex_phash);
-		if (!hb_p)
+		fph = rcu_dereference(mm->futex_phash);
+		if (!fph)
 			return NULL;
 
-		if (rcuref_get(&hb_p->users))
-			return hb_p;
+		if (rcuref_get(&fph->users))
+			return fph;
 	}
 	scoped_guard(mutex, &current->mm->futex_hash_lock)
 		futex_assign_new_hash(NULL, mm);
@@ -275,12 +275,12 @@ static struct futex_private_hash *futex_get_private_hb(union futex_key *key)
  */
 struct futex_hash_bucket *__futex_hash(union futex_key *key)
 {
-	struct futex_private_hash *hb_p;
+	struct futex_private_hash *fph;
 	u32 hash;
 
-	hb_p = futex_get_private_hb(key);
-	if (hb_p)
-		return futex_hash_private(key, hb_p->queues, hb_p->hash_mask);
+	fph = futex_get_private_hb(key);
+	if (fph)
+		return futex_hash_private(key, fph->queues, fph->hash_mask);
 
 	hash = jhash2((u32 *)key,
 		      offsetof(typeof(*key), both.offset) / 4,
@@ -289,14 +289,14 @@ struct futex_hash_bucket *__futex_hash(union futex_key *key)
 }
 
 #ifndef CONFIG_BASE_SMALL
-bool futex_put_private_hash(struct futex_private_hash *hb_p)
+bool futex_put_private_hash(struct futex_private_hash *fph)
 {
 	bool released;
 
 	guard(preempt)();
-	released = rcuref_put_rcusafe(&hb_p->users);
+	released = rcuref_put_rcusafe(&fph->users);
 	if (released)
-		WRITE_ONCE(hb_p->released, true);
+		WRITE_ONCE(fph->released, true);
 	return released;
 }
 
@@ -309,21 +309,21 @@ bool futex_put_private_hash(struct futex_private_hash *hb_p)
  */
 void futex_hash_get(struct futex_hash_bucket *hb)
 {
-	struct futex_private_hash *hb_p = hb->hb_p;
+	struct futex_private_hash *fph = hb->priv;
 
-	if (!hb_p)
+	if (!fph)
 		return;
 
-	WARN_ON_ONCE(!rcuref_get(&hb_p->users));
+	WARN_ON_ONCE(!rcuref_get(&fph->users));
 }
 
 void futex_hash_put(struct futex_hash_bucket *hb)
 {
-	struct futex_private_hash *hb_p = hb->hb_p;
+	struct futex_private_hash *fph = hb->priv;
 
-	if (!hb_p)
+	if (!fph)
 		return;
-	futex_put_private_hash(hb_p);
+	futex_put_private_hash(fph);
 }
 #endif
 
@@ -1182,7 +1182,7 @@ static void compat_exit_robust_list(struct task_struct *curr)
 static void exit_pi_state_list(struct task_struct *curr)
 {
 	struct list_head *next, *head = &curr->pi_state_list;
-	struct futex_private_hash *hb_p;
+	struct futex_private_hash *fph;
 	struct futex_pi_state *pi_state;
 	union futex_key key = FUTEX_KEY_INIT;
 
@@ -1196,7 +1196,7 @@ static void exit_pi_state_list(struct task_struct *curr)
 	 * on the mutex.
 	 */
 	WARN_ON(curr != current);
-	hb_p = futex_get_private_hash();
+	fph = futex_get_private_hash();
 	/*
 	 * We are a ZOMBIE and nobody can enqueue itself on
 	 * pi_state_list anymore, but we have to be careful
@@ -1259,8 +1259,8 @@ static void exit_pi_state_list(struct task_struct *curr)
 		raw_spin_lock_irq(&curr->pi_lock);
 	}
 	raw_spin_unlock_irq(&curr->pi_lock);
-	if (hb_p)
-		futex_put_private_hash(hb_p);
+	if (fph)
+		futex_put_private_hash(fph);
 }
 #else
 static inline void exit_pi_state_list(struct task_struct *curr) { }
@@ -1375,10 +1375,10 @@ void futex_exit_release(struct task_struct *tsk)
 }
 
 static void futex_hash_bucket_init(struct futex_hash_bucket *fhb,
-				   struct futex_private_hash *hb_p)
+				   struct futex_private_hash *fph)
 {
 #ifndef CONFIG_BASE_SMALL
-	fhb->hb_p = hb_p;
+	fhb->priv = fph;
 #endif
 	atomic_set(&fhb->waiters, 0);
 	plist_head_init(&fhb->chain);
@@ -1388,7 +1388,7 @@ static void futex_hash_bucket_init(struct futex_hash_bucket *fhb,
 #ifndef CONFIG_BASE_SMALL
 void futex_hash_free(struct mm_struct *mm)
 {
-	struct futex_private_hash *hb_p;
+	struct futex_private_hash *fph;
 
 	kvfree(mm->futex_phash_new);
 	/*
@@ -1399,19 +1399,19 @@ void futex_hash_free(struct mm_struct *mm)
 	 * Since there can not be a thread holding a reference to the private
 	 * hash we free it immediately.
 	 */
-	hb_p = rcu_dereference_raw(mm->futex_phash);
-	if (!hb_p)
+	fph = rcu_dereference_raw(mm->futex_phash);
+	if (!fph)
 		return;
 
-	if (!hb_p->initial_ref_dropped && WARN_ON(!futex_put_private_hash(hb_p)))
+	if (!fph->initial_ref_dropped && WARN_ON(!futex_put_private_hash(fph)))
 		return;
 
-	kvfree(hb_p);
+	kvfree(fph);
 }
 
 static int futex_hash_allocate(unsigned int hash_slots)
 {
-	struct futex_private_hash *hb_p, *hb_tofree = NULL;
+	struct futex_private_hash *fph, *hb_tofree = NULL;
 	struct mm_struct *mm = current->mm;
 	size_t alloc_size;
 	int i;
@@ -1430,29 +1430,29 @@ static int futex_hash_allocate(unsigned int hash_slots)
 					&alloc_size)))
 		return -ENOMEM;
 
-	hb_p = kvmalloc(alloc_size, GFP_KERNEL_ACCOUNT);
-	if (!hb_p)
+	fph = kvmalloc(alloc_size, GFP_KERNEL_ACCOUNT);
+	if (!fph)
 		return -ENOMEM;
 
-	rcuref_init(&hb_p->users, 1);
-	hb_p->initial_ref_dropped = false;
-	hb_p->released = false;
-	hb_p->hash_mask = hash_slots - 1;
+	rcuref_init(&fph->users, 1);
+	fph->initial_ref_dropped = false;
+	fph->released = false;
+	fph->hash_mask = hash_slots - 1;
 
 	for (i = 0; i < hash_slots; i++)
-		futex_hash_bucket_init(&hb_p->queues[i], hb_p);
+		futex_hash_bucket_init(&fph->queues[i], fph);
 
 	scoped_guard(mutex, &mm->futex_hash_lock) {
 		if (mm->futex_phash_new) {
-			if (mm->futex_phash_new->hash_mask <= hb_p->hash_mask) {
+			if (mm->futex_phash_new->hash_mask <= fph->hash_mask) {
 				hb_tofree = mm->futex_phash_new;
 			} else {
-				hb_tofree = hb_p;
-				hb_p = mm->futex_phash_new;
+				hb_tofree = fph;
+				fph = mm->futex_phash_new;
 			}
 			mm->futex_phash_new = NULL;
 		}
-		futex_assign_new_hash(hb_p, mm);
+		futex_assign_new_hash(fph, mm);
 	}
 	kvfree(hb_tofree);
 	return 0;
@@ -1461,16 +1461,16 @@ static int futex_hash_allocate(unsigned int hash_slots)
 int futex_hash_allocate_default(void)
 {
 	unsigned int threads, buckets, current_buckets = 0;
-	struct futex_private_hash *hb_p;
+	struct futex_private_hash *fph;
 
 	if (!current->mm)
 		return 0;
 
 	scoped_guard(rcu) {
 		threads = min_t(unsigned int, get_nr_threads(current), num_online_cpus());
-		hb_p = rcu_dereference(current->mm->futex_phash);
-		if (hb_p)
-			current_buckets = hb_p->hash_mask + 1;
+		fph = rcu_dereference(current->mm->futex_phash);
+		if (fph)
+			current_buckets = fph->hash_mask + 1;
 	}
 
 	/*
@@ -1488,12 +1488,12 @@ int futex_hash_allocate_default(void)
 
 static int futex_hash_get_slots(void)
 {
-	struct futex_private_hash *hb_p;
+	struct futex_private_hash *fph;
 
 	guard(rcu)();
-	hb_p = rcu_dereference(current->mm->futex_phash);
-	if (hb_p)
-		return hb_p->hash_mask + 1;
+	fph = rcu_dereference(current->mm->futex_phash);
+	if (fph)
+		return fph->hash_mask + 1;
 	return 0;
 }
 

@@ -118,7 +118,7 @@ struct futex_hash_bucket {
 	atomic_t waiters;
 	spinlock_t lock;
 	struct plist_head chain;
-	struct futex_private_hash *hb_p;
+	struct futex_private_hash *priv;
 } ____cacheline_aligned_in_smp;
 
 /*
@@ -209,13 +209,13 @@ extern struct futex_hash_bucket *__futex_hash(union futex_key *key);
 static inline void futex_hash_get(struct futex_hash_bucket *hb) { }
 static inline void futex_hash_put(struct futex_hash_bucket *hb) { }
 static inline struct futex_private_hash *futex_get_private_hash(void) { return NULL; }
-static inline bool futex_put_private_hash(struct futex_private_hash *hb_p) { return false; }
+static inline bool futex_put_private_hash(struct futex_private_hash *fph) { return false; }
 
 #else /* !CONFIG_BASE_SMALL */
 extern void futex_hash_get(struct futex_hash_bucket *hb);
 extern void futex_hash_put(struct futex_hash_bucket *hb);
 extern struct futex_private_hash *futex_get_private_hash(void);
-extern bool futex_put_private_hash(struct futex_private_hash *hb_p);
+extern bool futex_put_private_hash(struct futex_private_hash *fph);
 #endif
 
 DEFINE_CLASS(hb, struct futex_hash_bucket *,
