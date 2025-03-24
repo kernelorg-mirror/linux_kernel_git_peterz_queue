@@ -9,6 +9,7 @@
 #include <linux/livepatch.h>
 #include <linux/audit.h>
 #include <linux/tick.h>
+#include <linux/hrtimer.h>
 
 #include "common.h"
 
@@ -229,6 +230,7 @@ noinstr void irqentry_exit_to_user_mode(struct pt_regs *regs)
 {
 	instrumentation_begin();
 	exit_to_user_mode_prepare(regs);
+	hrtimer_rearm();
 	instrumentation_end();
 	exit_to_user_mode();
 }
@@ -340,6 +342,7 @@ noinstr void irqentry_exit(struct pt_regs *regs, irqentry_state_t state)
 		 */
 		if (state.exit_rcu) {
 			instrumentation_begin();
+			hrtimer_rearm();
 			/* Tell the tracer that IRET will enable interrupts */
 			trace_hardirqs_on_prepare();
 			lockdep_hardirqs_on_prepare();
@@ -353,10 +356,14 @@ noinstr void irqentry_exit(struct pt_regs *regs, irqentry_state_t state)
 		if (IS_ENABLED(CONFIG_PREEMPTION))
 			irqentry_exit_cond_resched();
 
+		hrtimer_rearm();
 		/* Covers both tracing and lockdep */
 		trace_hardirqs_on();
 		instrumentation_end();
 	} else {
+		instrumentation_begin();
+		hrtimer_rearm();
+		instrumentation_end();
 		/*
 		 * IRQ flags state is correct already. Just tell RCU if it
 		 * was not watching on entry.

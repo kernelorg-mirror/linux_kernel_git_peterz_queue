@@ -5182,6 +5182,12 @@ prepare_task_switch(struct rq *rq, struct task_struct *prev,
 	fire_sched_out_preempt_notifiers(prev, next);
 	kmap_local_sched_out();
 	prepare_task(next);
+	/*
+	 * Notably, this must be called after pick_next_task() but before
+	 * switch_to(), since the new task need not be on the return from
+	 * interrupt path.
+	 */
+	hrtimer_rearm();
 	prepare_arch_switch(next);
 }
 
