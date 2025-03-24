@@ -63,8 +63,13 @@ SCHED_FEAT(DELAY_ZERO, true)
  */
 SCHED_FEAT(WAKEUP_PREEMPTION, true)
 
+#ifdef CONFIG_GENERIC_ENTRY
+SCHED_FEAT(HRTICK, true)
+SCHED_FEAT(HRTICK_DL, true)
+#else
 SCHED_FEAT(HRTICK, false)
 SCHED_FEAT(HRTICK_DL, false)
+#endif
 
 /*
  * Decrement CPU capacity based on time not spent running tasks
