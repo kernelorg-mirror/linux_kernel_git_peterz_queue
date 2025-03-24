@@ -1892,10 +1892,9 @@ static __latent_entropy void hrtimer_run_softirq(void)
  * Very similar to hrtimer_force_reprogram(), except it deals with
  * in_hrirq and hang_detected.
  */
-static void __hrtimer_rearm(struct hrtimer_cpu_base *cpu_base, ktime_t now)
+static void __hrtimer_rearm(struct hrtimer_cpu_base *cpu_base,
+			    ktime_t now, ktime_t expires_next)
 {
-	ktime_t expires_next = hrtimer_update_next_event(cpu_base);
-
 	cpu_base->expires_next = expires_next;
 	cpu_base->in_hrtirq = 0;
 
@@ -1970,9 +1969,30 @@ retry:
 		cpu_base->hang_detected = 1;
 	}
 
-	__hrtimer_rearm(cpu_base, now);
+#ifdef TIF_HRTIMER_REARM
+	set_thread_flag(TIF_HRTIMER_REARM);
+#else
+	__hrtimer_rearm(cpu_base, now, expires_next);
+#endif
 	raw_spin_unlock_irqrestore(&cpu_base->lock, flags);
 }
+
+#ifdef TIF_HRTIMER_REARM
+void _hrtimer_rearm(void)
+{
+	struct hrtimer_cpu_base *cpu_base = this_cpu_ptr(&hrtimer_bases);
+	ktime_t now, expires_next;
+
+	lockdep_assert_irqs_disabled();
+
+	scoped_guard (raw_spinlock, &cpu_base->lock) {
+		now = hrtimer_update_base(cpu_base);
+		expires_next = hrtimer_update_next_event(cpu_base);
+		__hrtimer_rearm(cpu_base, now, expires_next);
+		clear_thread_flag(TIF_HRTIMER_REARM);
+	}
+}
+#endif /* TIF_HRTIMER_REARM */
 #endif /* !CONFIG_HIGH_RES_TIMERS */
 
 /*

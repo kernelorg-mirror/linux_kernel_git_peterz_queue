@@ -224,6 +224,8 @@ static __always_inline void __exit_to_user_mode_prepare(struct pt_regs *regs)
 	ti_work = read_thread_flags();
 	if (unlikely(ti_work & EXIT_TO_USER_MODE_WORK))
 		ti_work = exit_to_user_mode_loop(regs, ti_work);
+	else
+		hrtimer_rearm();
 
 	arch_exit_to_user_mode_prepare(regs, ti_work);
 }

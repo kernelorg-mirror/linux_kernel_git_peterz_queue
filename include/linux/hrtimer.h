@@ -175,9 +175,26 @@ extern void hrtimer_interrupt(struct clock_event_device *dev);
 
 extern unsigned int hrtimer_resolution;
 
+#ifdef TIF_HRTIMER_REARM
+extern void _hrtimer_rearm(void);
+/*
+ * This is to be called on all irqentry_exit() paths that will enable
+ * interrupts; as well as in the context switch path before switch_to().
+ */
+static inline void hrtimer_rearm(void)
+{
+	if (test_thread_flag(TIF_HRTIMER_REARM))
+		_hrtimer_rearm();
+}
+#else
+static inline void hrtimer_rearm(void) { }
+#endif /* TIF_HRTIMER_REARM */
+
 #else
 
 #define hrtimer_resolution	(unsigned int)LOW_RES_NSEC
+
+static inline void hrtimer_rearm(void) { }
 
 #endif
 

@@ -7,6 +7,7 @@
 #include <linux/kmsan.h>
 #include <linux/livepatch.h>
 #include <linux/tick.h>
+#include <linux/hrtimer.h>
 
 /* Workaround to allow gradual conversion of architecture code */
 void __weak arch_do_signal_or_restart(struct pt_regs *regs) { }
@@ -46,6 +47,16 @@ static __always_inline unsigned long __exit_to_user_mode_loop(struct pt_regs *re
 	 * items have been completed.
 	 */
 	while (ti_work & EXIT_TO_USER_MODE_WORK_LOOP) {
+
+		/*
+		 * If hrtimer need re-arming, do so before enabling IRQs,
+		 * except when a reschedule is needed, in that case schedule()
+		 * will do this.
+		 */
+		if ((ti_work & (_TIF_NEED_RESCHED |
+				_TIF_NEED_RESCHED_LAZY |
+				_TIF_HRTIMER_REARM)) == _TIF_HRTIMER_REARM)
+			hrtimer_rearm();
 
 		local_irq_enable_exit_to_user(ti_work);
 
@@ -225,6 +236,7 @@ noinstr void irqentry_exit(struct pt_regs *regs, irqentry_state_t state)
 		 */
 		if (state.exit_rcu) {
 			instrumentation_begin();
+			hrtimer_rearm();
 			/* Tell the tracer that IRET will enable interrupts */
 			trace_hardirqs_on_prepare();
 			lockdep_hardirqs_on_prepare();
@@ -238,6 +250,7 @@ noinstr void irqentry_exit(struct pt_regs *regs, irqentry_state_t state)
 		if (IS_ENABLED(CONFIG_PREEMPTION))
 			irqentry_exit_cond_resched();
 
+		hrtimer_rearm();
 		/* Covers both tracing and lockdep */
 		trace_hardirqs_on();
 		instrumentation_end();

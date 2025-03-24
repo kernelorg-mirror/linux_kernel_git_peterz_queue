@@ -6825,6 +6825,16 @@ picked:
 keep_resched:
 	rq->last_seen_need_resched_ns = 0;
 
+	/*
+	 * Notably, this must be called after pick_next_task() but before
+	 * switch_to(), since the new task need not be on the return from
+	 * interrupt path. Additionally, exit_to_user_mode_loop() relies on
+	 * any schedule() call to imply this call, so do it unconditionally.
+	 *
+	 * We've just cleared TIF_NEED_RESCHED, TIF word should be in cache.
+	 */
+	hrtimer_rearm();
+
 	is_switch = prev != next;
 	if (likely(is_switch)) {
 		rq->nr_switches++;
