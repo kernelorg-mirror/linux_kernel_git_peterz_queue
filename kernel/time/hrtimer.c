@@ -1129,7 +1129,7 @@ static void __remove_hrtimer(struct hrtimer *timer,
 	 * an superfluous call to hrtimer_force_reprogram() on the
 	 * remote cpu later on if the same timer gets enqueued again.
 	 */
-	if (reprogram && timer == cpu_base->next_timer)
+	if (!timer->is_fuzzy && reprogram && timer == cpu_base->next_timer)
 		hrtimer_force_reprogram(cpu_base, 1);
 }
 
@@ -1275,6 +1275,19 @@ static int __hrtimer_start_range_ns(struct hrtimer *timer, ktime_t tim,
 	 */
 	if (new_base->cpu_base->in_hrtirq)
 		return 0;
+
+	if (timer->is_fuzzy) {
+		/*
+		 * XXX fuzzy implies pinned!  not sure how to deal with
+		 * retrigger_next_event() for the !local case.
+		 */
+		WARN_ON_ONCE(!(mode & HRTIMER_MODE_PINNED));
+		/*
+		 * Notably, by going into hrtimer_reprogram(), it will
+		 * not reprogram if cpu_base->expires_next is earlier.
+		 */
+		return first;
+	}
 
 	if (!force_local) {
 		/*
@@ -1629,6 +1642,7 @@ static void __hrtimer_setup(struct hrtimer *timer,
 	base += hrtimer_clockid_to_base(clock_id);
 	timer->is_soft = softtimer;
 	timer->is_hard = !!(mode & HRTIMER_MODE_HARD);
+	timer->is_fuzzy = !!(mode & HRTIMER_MODE_FUZZY);
 	timer->base = &cpu_base->clock_base[base];
 	timerqueue_init(&timer->node);
 
