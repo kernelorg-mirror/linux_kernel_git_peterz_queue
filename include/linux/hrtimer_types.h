@@ -45,6 +45,7 @@ struct hrtimer {
 	u8				is_rel;
 	u8				is_soft;
 	u8				is_hard;
+	u8				is_fuzzy;
 };
 
 #endif /* _LINUX_HRTIMER_TYPES_H */
