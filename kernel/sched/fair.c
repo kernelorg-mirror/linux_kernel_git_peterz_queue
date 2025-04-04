@@ -6913,6 +6913,8 @@ requeue_delayed_entity(struct sched_entity *se)
 {
 	struct cfs_rq *cfs_rq = cfs_rq_of(se);
 
+	update_curr(cfs_rq);
+
 	/*
 	 * se->sched_delayed should imply: se->on_rq == 1.
 	 * Because a delayed entity is one that is still on
