@@ -903,6 +903,26 @@ static inline void cancel_protect_slice(struct sched_entity *se)
 		se->vlag = se->deadline + 1;
 }
 
+static inline bool __pick_eevdf_curr(struct cfs_rq *cfs_rq, struct sched_entity *best)
+{
+	struct sched_entity *curr = cfs_rq->curr;
+
+	/* only called when this is already checked */
+	WARN_ON_ONCE(!curr || !curr->on_rq);
+
+	/*
+	 * Strictly speaking we should allow current to run until its
+	 * deadline. However allow (wakeup) preemption once it is no longer
+	 * eligible.
+	 */
+	if (sched_feat(RUN_TO_PARITY) &&
+	    protect_slice(curr) &&
+	    entity_eligible(cfs_rq, curr))
+		return true;
+
+	return entity_before(curr, best);
+}
+
 /*
  * Earliest Eligible Virtual Deadline First
  *
@@ -929,18 +949,15 @@ static struct sched_entity *pick_eevdf(struct cfs_rq *cfs_rq)
 	struct sched_entity *curr = cfs_rq->curr;
 	struct sched_entity *best = NULL;
 
+	if (curr && !curr->on_rq)
+		curr = NULL;
+
 	/*
 	 * We can safely skip eligibility check if there is only one entity
 	 * in this cfs_rq, saving some cycles.
 	 */
 	if (cfs_rq->nr_queued == 1)
-		return curr && curr->on_rq ? curr : se;
-
-	if (curr && (!curr->on_rq || !entity_eligible(cfs_rq, curr)))
-		curr = NULL;
-
-	if (sched_feat(RUN_TO_PARITY) && curr && protect_slice(curr))
-		return curr;
+		return curr ?: se;
 
 	/* Pick the leftmost entity if it's eligible */
 	if (se && entity_eligible(cfs_rq, se)) {
@@ -977,7 +994,7 @@ static struct sched_entity *pick_eevdf(struct cfs_rq *cfs_rq)
 		node = node->rb_right;
 	}
 found:
-	if (!best || (curr && entity_before(curr, best)))
+	if (!best || (curr && __pick_eevdf_curr(cfs_rq, best)))
 		best = curr;
 
 	return best;
