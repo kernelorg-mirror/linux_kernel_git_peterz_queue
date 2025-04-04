@@ -918,7 +918,7 @@ static inline bool __pick_eevdf_curr(struct cfs_rq *cfs_rq, struct sched_entity 
 	if (sched_feat(RUN_TO_PARITY) &&
 	    protect_slice(curr) &&
 	    entity_eligible(cfs_rq, curr))
-		return true;
+		return !sched_feat(PREEMPT_SHORT) || curr->slice < best->slice;
 
 	return entity_before(curr, best);
 }
@@ -1195,7 +1195,7 @@ static inline bool did_preempt_short(struct cfs_rq *cfs_rq, struct sched_entity 
 	if (!sched_feat(PREEMPT_SHORT))
 		return false;
 
-	if (curr->vlag == curr->deadline)
+	if (protect_slice(curr))
 		return false;
 
 	return !entity_eligible(cfs_rq, curr);
