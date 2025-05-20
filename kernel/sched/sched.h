@@ -1500,6 +1500,12 @@ static inline void lockdep_assert_rq_held(struct rq *rq)
 	lockdep_assert_held(__rq_lockp(rq));
 }
 
+static inline void lockdep_assert_sched_held(struct task_struct *p)
+{
+	lockdep_assert(lockdep_is_held(&p->pi_lock) ||
+		       lockdep_is_held(__rq_lockp(task_rq(p))));
+}
+
 extern void raw_spin_rq_lock_nested(struct rq *rq, int subclass);
 extern bool raw_spin_rq_trylock(struct rq *rq);
 extern void raw_spin_rq_unlock(struct rq *rq);
@@ -2278,6 +2284,8 @@ static inline int task_on_rq_migrating(struct task_struct *p)
 #define WF_MIGRATED		0x20 /* Internal use, task got migrated */
 #define WF_CURRENT_CPU		0x40 /* Prefer to move the wakee to the current CPU. */
 #define WF_RQ_SELECTED		0x80 /* ->select_task_rq() was called */
+
+#define WF_DELAYED		0x0100
 
 static_assert(WF_EXEC == SD_BALANCE_EXEC);
 static_assert(WF_FORK == SD_BALANCE_FORK);

@@ -5321,7 +5321,10 @@ static __always_inline void return_cfs_rq_runtime(struct cfs_rq *cfs_rq);
 
 static void set_delayed(struct sched_entity *se)
 {
-	se->sched_delayed = 1;
+	/*
+	 * See TTWU_QUEUE_DELAYED in ttwu_runnable().
+	 */
+	smp_store_release(&se->sched_delayed, 1);
 
 	/*
 	 * Delayed se of cfs_rq have no tasks queued on them.
@@ -8475,10 +8478,22 @@ select_task_rq_fair(struct task_struct *p, int prev_cpu, int wake_flags)
 	/* SD_flags and WF_flags share the first nibble */
 	int sd_flag = wake_flags & 0xF;
 
+	if (wake_flags & WF_DELAYED) {
+		/*
+		 * This is the ttwu_delayed() case; where prev_cpu is in fact
+		 * the CPU that did the wakeup, while @p is running on the
+		 * current CPU.
+		 *
+		 * Make sure to flip them the right way around, otherwise
+		 * wake-affine is going to do the wrong thing.
+		 */
+		swap(cpu, new_cpu);
+	}
+
 	/*
 	 * required for stable ->cpus_allowed
 	 */
-	lockdep_assert_held(&p->pi_lock);
+	lockdep_assert_sched_held(p);
 	if (wake_flags & WF_TTWU) {
 		record_wakee(p);
 
