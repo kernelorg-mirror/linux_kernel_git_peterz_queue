@@ -650,15 +650,20 @@ static inline s64 entity_key(struct cfs_rq *cfs_rq, struct sched_entity *se)
  * Since zero_vruntime closely tracks the per-task service, these
  * deltas: (v_i - v0), will be in the order of the maximal (virtual) lag
  * induced in the system due to quantisation.
- *
- * Also, we use scale_load_down() to reduce the size.
- *
- * As measured, the max (key * weight) value was ~44 bits for a kernel build.
  */
-static void
-sum_w_vruntime_add(struct cfs_rq *cfs_rq, struct sched_entity *se)
+static inline unsigned long avg_vruntime_weight(struct cfs_rq *cfs_rq, unsigned long w)
 {
-	unsigned long weight = scale_load_down(se->load.weight);
+#ifdef CONFIG_64BIT
+	if (cfs_rq->sum_shift)
+		w = max(2UL, w >> cfs_rq->sum_shift);
+#endif
+	return w;
+}
+
+static inline void
+__sum_w_vruntime_add(struct cfs_rq *cfs_rq, struct sched_entity *se)
+{
+	unsigned long weight = avg_vruntime_weight(cfs_rq, se->load.weight);
 	s64 key = entity_key(cfs_rq, se);
 
 	cfs_rq->sum_w_vruntime += key * weight;
@@ -666,9 +671,59 @@ sum_w_vruntime_add(struct cfs_rq *cfs_rq, struct sched_entity *se)
 }
 
 static void
+sum_w_vruntime_add_paranoid(struct cfs_rq *cfs_rq, struct sched_entity *se)
+{
+	unsigned long weight;
+	s64 key, tmp;
+
+again:
+	weight = avg_vruntime_weight(cfs_rq, se->load.weight);
+	key = entity_key(cfs_rq, se);
+
+	if (check_mul_overflow(key, weight, &key))
+		goto overflow;
+
+	if (check_add_overflow(cfs_rq->sum_w_vruntime, key, &tmp))
+		goto overflow;
+
+	cfs_rq->sum_w_vruntime = tmp;
+	cfs_rq->sum_weight += weight;
+	return;
+
+overflow:
+	/*
+	 * There's gotta be a limit -- if we're still failing at this point
+	 * there's really nothing much to be done about things.
+	 */
+	BUG_ON(cfs_rq->sum_shift >= 10);
+	cfs_rq->sum_shift++;
+
+	/*
+	 * Note: \Sum (k_i * (w_i >> 1)) != (\Sum (k_i * w_i)) >> 1
+	 */
+	cfs_rq->sum_w_vruntime = 0;
+	cfs_rq->sum_weight = 0;
+
+	for (struct rb_node *node = cfs_rq->tasks_timeline.rb_leftmost;
+	     node; node = rb_next(node))
+		__sum_w_vruntime_add(cfs_rq, __node_2_se(node));
+
+	goto again;
+}
+
+static void
+sum_w_vruntime_add(struct cfs_rq *cfs_rq, struct sched_entity *se)
+{
+	if (sched_feat(PARANOID_AVG))
+		return sum_w_vruntime_add_paranoid(cfs_rq, se);
+
+	__sum_w_vruntime_add(cfs_rq, se);
+}
+
+static void
 sum_w_vruntime_sub(struct cfs_rq *cfs_rq, struct sched_entity *se)
 {
-	unsigned long weight = scale_load_down(se->load.weight);
+	unsigned long weight = avg_vruntime_weight(cfs_rq, se->load.weight);
 	s64 key = entity_key(cfs_rq, se);
 
 	cfs_rq->sum_w_vruntime -= key * weight;
@@ -695,7 +750,7 @@ u64 avg_vruntime(struct cfs_rq *cfs_rq)
 	long load = cfs_rq->sum_weight;
 
 	if (curr && curr->on_rq) {
-		unsigned long weight = scale_load_down(curr->load.weight);
+		unsigned long weight = avg_vruntime_weight(cfs_rq, curr->load.weight);
 
 		avg += entity_key(cfs_rq, curr) * weight;
 		load += weight;
@@ -5177,9 +5232,9 @@ place_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int flags)
 		 */
 		load = cfs_rq->sum_weight;
 		if (curr && curr->on_rq)
-			load += scale_load_down(curr->load.weight);
+			load += avg_vruntime_weight(cfs_rq, curr->load.weight);
 
-		lag *= load + scale_load_down(se->load.weight);
+		lag *= load + avg_vruntime_weight(cfs_rq, se->load.weight);
 		if (WARN_ON_ONCE(!load))
 			load = 1;
 		lag = div_s64(lag, load);
