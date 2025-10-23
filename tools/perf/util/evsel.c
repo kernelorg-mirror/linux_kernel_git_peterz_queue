@@ -1520,6 +1520,7 @@ void evsel__config(struct evsel *evsel, struct record_opts *opts,
 	attr->mmap2    = track && !perf_missing_features.mmap2;
 	attr->comm     = track;
 	attr->build_id = track && opts->build_id;
+	attr->defer_output = track && !perf_missing_features.defer_callchain;
 
 	/*
 	 * ksymbol is tracked separately with text poke because it needs to be
@@ -2206,8 +2207,10 @@ static int __evsel__prepare_open(struct evsel *evsel, struct perf_cpu_map *cpus,
 
 static void evsel__disable_missing_features(struct evsel *evsel)
 {
-	if (perf_missing_features.defer_callchain)
+	if (perf_missing_features.defer_callchain) {
 		evsel->core.attr.defer_callchain = 0;
+		evsel->core.attr.defer_output = 0;
+	}
 	if (perf_missing_features.inherit_sample_read && evsel->core.attr.inherit &&
 	    (evsel->core.attr.sample_type & PERF_SAMPLE_READ))
 		evsel->core.attr.inherit = 0;
@@ -2489,6 +2492,7 @@ static bool evsel__detect_missing_features(struct evsel *evsel, struct perf_cpu 
 	perf_missing_features.defer_callchain = true;
 	pr_debug2("switching off deferred callchain support\n");
 	attr.defer_callchain = false;
+	attr.defer_output = false;
 	attr.sample_type = 0;
 
 	attr.inherit = true;
@@ -3255,8 +3259,8 @@ int evsel__parse_sample(struct evsel *evsel, union perf_event *event,
 			return -EFAULT;
 		sz = data->callchain->nr * sizeof(u64);
 		if (evsel->core.attr.defer_callchain &&
-		    data->callchain->nr >= PERF_DEFERRED_ITEMS &&
-		    data->callchain->ips[data->callchain->nr - PERF_DEFERRED_ITEMS] == PERF_CONTEXT_USER_DEFERRED) {
+		    data->callchain->nr >= 2 &&
+		    data->callchain->ips[data->callchain->nr - 2] == PERF_CONTEXT_USER_DEFERRED) {
 			data->deferred_callchain = true;
 			data->deferred_cookie = data->callchain->ips[data->callchain->nr - 1];
 		}

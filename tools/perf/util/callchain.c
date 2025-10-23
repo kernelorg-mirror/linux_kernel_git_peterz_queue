@@ -1832,7 +1832,7 @@ int sample__for_each_callchain_node(struct thread *thread, struct evsel *evsel,
 int sample__merge_deferred_callchain(struct perf_sample *sample_orig,
 				     struct perf_sample *sample_callchain)
 {
-	u64 nr_orig = sample_orig->callchain->nr - PERF_DEFERRED_ITEMS;
+	u64 nr_orig = sample_orig->callchain->nr - 1;
 	u64 nr_deferred = sample_callchain->callchain->nr;
 	struct ip_callchain *callchain;
 
