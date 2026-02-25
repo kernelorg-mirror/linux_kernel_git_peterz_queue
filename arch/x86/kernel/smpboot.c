@@ -61,6 +61,7 @@
 #include <linux/cpuhotplug.h>
 #include <linux/mc146818rtc.h>
 #include <linux/acpi.h>
+#include <linux/once_lite.h>
 
 #include <asm/acpi.h>
 #include <asm/cacheinfo.h>
@@ -489,7 +490,7 @@ static void __init build_sched_topology(void)
 	 * PKG domain since the NUMA domains will auto-magically create the
 	 * right spanning domains based on the SLIT.
 	 */
-	if (__num_nodes_per_package > 1) {
+	if (topology_num_nodes_per_package() > 1) {
 		unsigned int pkgdom = ARRAY_SIZE(x86_topology) - 2;
 
 		memset(&x86_topology[pkgdom], 0, sizeof(x86_topology[pkgdom]));
@@ -506,33 +507,92 @@ static void __init build_sched_topology(void)
 }
 
 #ifdef CONFIG_NUMA
-static int sched_avg_remote_distance;
-static int avg_remote_numa_distance(void)
+static bool slit_cluster_symmetric(int N)
 {
-	int i, j;
-	int distance, nr_remote, total_distance;
+	int u = topology_num_nodes_per_package();
 
-	if (sched_avg_remote_distance > 0)
-		return sched_avg_remote_distance;
-
-	nr_remote = 0;
-	total_distance = 0;
-	for_each_node_state(i, N_CPU) {
-		for_each_node_state(j, N_CPU) {
-			distance = node_distance(i, j);
-
-			if (distance >= REMOTE_DISTANCE) {
-				nr_remote++;
-				total_distance += distance;
-			}
+	for (int k = 0; k < u; k++) {
+		for (int l = k; l < u; l++) {
+			if (node_distance(N + k, N + l) !=
+			    node_distance(N + l, N + k))
+				return false;
 		}
 	}
-	if (nr_remote)
-		sched_avg_remote_distance = total_distance / nr_remote;
-	else
-		sched_avg_remote_distance = REMOTE_DISTANCE;
 
-	return sched_avg_remote_distance;
+	return true;
+}
+
+static u32 slit_cluster_package(int N)
+{
+	int u = topology_num_nodes_per_package();
+	u32 pkg_id = ~0;
+
+	for (int n = 0; n < u; n++) {
+		const struct cpumask *cpus = cpumask_of_node(N + n);
+		int cpu;
+
+		for_each_cpu(cpu, cpus) {
+			u32 id = topology_logical_package_id(cpu);
+			if (pkg_id == ~0)
+				pkg_id = id;
+			if (pkg_id != id)
+				return ~0;
+		}
+	}
+
+	return pkg_id;
+}
+
+/* If you NUMA_EMU on top of SNC, you get to keep the pieces */
+static void slit_validate(void)
+{
+	int u = topology_num_nodes_per_package();
+	u32 pkg_id, prev_pkg_id = ~0;
+
+	for (int pkg = 0; pkg < topology_max_packages(); pkg++) {
+		int n = pkg * u;
+
+		/*
+		 * Ensure the on-trace cluster is symmetric and each cluster
+		 * has a different package id.
+		 */
+		WARN_ON_ONCE(slit_cluster_symmetric(n));
+		pkg_id = slit_cluster_package(n);
+		WARN_ON_ONCE(pkg_id == ~0);
+		WARN_ON_ONCE(pkg && pkg_id == prev_pkg_id);
+
+		prev_pkg_id = pkg_id;
+	}
+}
+
+static int slit_cluster_distance(int i, int j)
+{
+	int u = topology_num_nodes_per_package();
+	long d = 0;
+	int x, y;
+
+	DO_ONCE_LITE(slit_validate);
+
+	/*
+	 * Is this a unit cluster on the trace?
+	 */
+	if ((i / u) == (j / u))
+		return node_distance(i, j);
+
+	/*
+	 * Off-trace cluster, return average of the cluster to force symmetry.
+	 */
+	x = i - (i % u);
+	y = j - (j % u);
+
+	for (i = x; i < x + u; i++) {
+		for (j = y; j < y + u; j++) {
+			d += node_distance(i, j);
+			d += node_distance(j, i);
+		}
+	}
+
+	return d / (2*u*u);
 }
 
 int arch_sched_node_distance(int from, int to)
@@ -542,13 +602,12 @@ int arch_sched_node_distance(int from, int to)
 	switch (boot_cpu_data.x86_vfm) {
 	case INTEL_GRANITERAPIDS_X:
 	case INTEL_ATOM_DARKMONT_X:
-
-		if (topology_max_packages() == 1 || __num_nodes_per_package == 1 ||
-		    d < REMOTE_DISTANCE)
+		if (topology_max_packages() == 1 ||
+		    topology_num_nodes_per_package() < 3)
 			return d;
 
 		/*
-		 * With SNC enabled, there could be too many levels of remote
+		 * With SNC-3 enabled, there could be too many levels of remote
 		 * NUMA node distances, creating NUMA domain levels
 		 * including local nodes and partial remote nodes.
 		 *
@@ -557,19 +616,8 @@ int arch_sched_node_distance(int from, int to)
 		 * in the remote package in the same sched group.
 		 * Simplify NUMA domains and avoid extra NUMA levels including
 		 * different remote NUMA nodes and local nodes.
-		 *
-		 * GNR and CWF don't expect systems with more than 2 packages
-		 * and more than 2 hops between packages. Single average remote
-		 * distance won't be appropriate if there are more than 2
-		 * packages as average distance to different remote packages
-		 * could be different.
 		 */
-		WARN_ONCE(topology_max_packages() > 2,
-			  "sched: Expect only up to 2 packages for GNR or CWF, "
-			  "but saw %d packages when building sched domains.",
-			  topology_max_packages());
-
-		d = avg_remote_numa_distance();
+		return slit_cluster_distance(from, to);
 	}
 	return d;
 }
@@ -599,7 +647,7 @@ void set_cpu_sibling_map(int cpu)
 		o = &cpu_data(i);
 
 		if (match_pkg(c, o) && !topology_same_node(c, o))
-			WARN_ON_ONCE(__num_nodes_per_package == 1);
+			WARN_ON_ONCE(topology_num_nodes_per_package() == 1);
 
 		if ((i == cpu) || (has_smt && match_smt(c, o)))
 			link_mask(topology_sibling_cpumask, cpu, i);
