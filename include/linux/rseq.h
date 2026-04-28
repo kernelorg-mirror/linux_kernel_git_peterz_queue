@@ -119,6 +119,7 @@ static inline void rseq_virt_userspace_exit(void)
 
 static inline void rseq_reset(struct task_struct *t)
 {
+	guard(irqsave)();
 	memset(&t->rseq, 0, sizeof(t->rseq));
 	t->rseq.ids.cpu_id = RSEQ_CPU_ID_UNINITIALIZED;
 }
