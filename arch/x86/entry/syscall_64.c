@@ -57,7 +57,6 @@ static noinline long x32_sys_call(const struct pt_regs *regs, unsigned int nr)
 static __always_inline bool do_syscall_x64(struct pt_regs *regs, unsigned long nr)
 {
 	if (likely(nr < NR_syscalls)) {
-		nr = array_index_nospec(nr, NR_syscalls);
 		regs->ax = x64_sys_call(regs, (unsigned int)nr);
 		return true;
 	}
@@ -70,7 +69,6 @@ static __always_inline void do_syscall_x32(struct pt_regs *regs, unsigned long n
 	nr -= __X32_SYSCALL_BIT;
 
 	if (IS_ENABLED(CONFIG_X86_X32_ABI) && likely(nr < X32_NR_syscalls)) {
-		nr = array_index_nospec(nr, X32_NR_syscalls);
 		regs->ax = x32_sys_call(regs, (unsigned int)nr);
 	}
 }

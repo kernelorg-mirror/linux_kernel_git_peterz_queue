@@ -75,7 +75,9 @@ early_param("ia32_emulation", ia32_emulation_override_cmdline);
 static __always_inline void do_syscall_32_irqs_on(struct pt_regs *regs, unsigned long nr)
 {
 	if (likely(nr < IA32_NR_syscalls)) {
+#ifdef CONFIG_X86_32
 		nr = array_index_nospec(nr, IA32_NR_syscalls);
+#endif
 		regs->ax = ia32_sys_call(regs, (unsigned int)nr);
 	}
 }
