@@ -90,17 +90,8 @@ CC_FLAGS_FPU += -mhard-float
 endif
 
 ifeq ($(CONFIG_X86_KERNEL_IBT),y)
-#
-# Kernel IBT has S_CET.NOTRACK_EN=0, as such the compilers must not generate
-# NOTRACK prefixes. Current generation compilers unconditionally employ NOTRACK
-# for jump-tables, as such, disable jump-tables for now.
-#
-# (jump-tables are implicitly disabled by RETPOLINE)
-#
-#   https://gcc.gnu.org/bugzilla/show_bug.cgi?id=104816
-#
-KBUILD_CFLAGS += $(call cc-option,-fcf-protection=branch -fno-jump-tables)
-KBUILD_RUSTFLAGS += -Zcf-protection=branch $(if $(call rustc-min-version,109300),-Cjump-tables=n,-Zno-jump-tables)
+KBUILD_CFLAGS += $(call cc-option,-fcf-protection=branch)
+KBUILD_RUSTFLAGS += -Zcf-protection=branch
 else
 KBUILD_CFLAGS += $(call cc-option,-fcf-protection=none)
 endif
@@ -178,6 +169,13 @@ endif
         KBUILD_RUSTFLAGS += -Ccode-model=kernel
 
         percpu_seg := gs
+
+	# Due to retpolines and cf-protection=branch's implicit NOTRACK usage
+	# for jump-tables, blanked disable jump-tables for all x86_64 builds to
+	# get a consistent behaviour across configurations. This allows
+	# removing some array_index_nospec() usage.
+	KBUILD_CFLAGS += -fno-jump-tables
+	KBUILD_RISTFLAGS += $(if $(call rustc-min-version,109300),-Cjump-tables=n,-Zno-jump-tables)
 endif
 
 ifeq ($(CONFIG_STACKPROTECTOR),y)
@@ -214,15 +212,6 @@ KBUILD_CFLAGS += -fno-asynchronous-unwind-tables
 ifdef CONFIG_MITIGATION_RETPOLINE
   KBUILD_CFLAGS += $(RETPOLINE_CFLAGS)
   KBUILD_RUSTFLAGS += $(RETPOLINE_RUSTFLAGS)
-  # Additionally, avoid generating expensive indirect jumps which
-  # are subject to retpolines for small number of switch cases.
-  # LLVM turns off jump table generation by default when under
-  # retpoline builds, however, gcc does not for x86. This has
-  # only been fixed starting from gcc stable version 8.4.0 and
-  # onwards, but not for older ones. See gcc bug #86952.
-  ifndef CONFIG_CC_IS_CLANG
-    KBUILD_CFLAGS += -fno-jump-tables
-  endif
 endif
 
 ifdef CONFIG_MITIGATION_SLS

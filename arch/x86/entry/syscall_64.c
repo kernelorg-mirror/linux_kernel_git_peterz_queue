@@ -59,7 +59,6 @@ static __always_inline bool do_syscall_x64(struct pt_regs *regs, int nr)
 	unsigned int unr = nr;
 
 	if (likely(unr < NR_syscalls)) {
-		unr = array_index_nospec(unr, NR_syscalls);
 		regs->ax = x64_sys_call(regs, unr);
 		return true;
 	}
@@ -76,7 +75,6 @@ static __always_inline bool do_syscall_x32(struct pt_regs *regs, int nr)
 	unsigned int xnr = nr - __X32_SYSCALL_BIT;
 
 	if (IS_ENABLED(CONFIG_X86_X32_ABI) && likely(xnr < X32_NR_syscalls)) {
-		xnr = array_index_nospec(xnr, X32_NR_syscalls);
 		regs->ax = x32_sys_call(regs, xnr);
 		return true;
 	}
