@@ -12,6 +12,7 @@
 #include <asm/traps.h>
 #include <asm/cpufeature.h>
 #include <asm/syscall.h>
+#include <asm/ibt.h>
 
 #ifdef CONFIG_IA32_EMULATION
 #define __SYSCALL_WITH_COMPAT(nr, native, compat)	__SYSCALL(nr, compat)
@@ -19,8 +20,8 @@
 #define __SYSCALL_WITH_COMPAT(nr, native, compat)	__SYSCALL(nr, native)
 #endif
 
-#define __SYSCALL(nr, sym) extern long __ia32_##sym(const struct pt_regs *);
-#define __SYSCALL_NORETURN(nr, sym) extern long __noreturn __ia32_##sym(const struct pt_regs *);
+#define __SYSCALL(nr, sym) extern __noendbr long __ia32_##sym(const struct pt_regs *);
+#define __SYSCALL_NORETURN(nr, sym) extern __noendbr long __noreturn __ia32_##sym(const struct pt_regs *);
 #include <asm/syscalls_32.h>
 #undef  __SYSCALL
 

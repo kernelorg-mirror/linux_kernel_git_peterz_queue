@@ -8,9 +8,10 @@
 #include <linux/entry-common.h>
 #include <linux/nospec.h>
 #include <asm/syscall.h>
+#include <asm/ibt.h>
 
-#define __SYSCALL(nr, sym) extern long __x64_##sym(const struct pt_regs *);
-#define __SYSCALL_NORETURN(nr, sym) extern long __noreturn __x64_##sym(const struct pt_regs *);
+#define __SYSCALL(nr, sym) extern __noendbr long __x64_##sym(const struct pt_regs *);
+#define __SYSCALL_NORETURN(nr, sym) extern __noendbr long __noreturn __x64_##sym(const struct pt_regs *);
 #include <asm/syscalls_64.h>
 #ifdef CONFIG_X86_X32_ABI
 #include <asm/syscalls_x32.h>
@@ -25,7 +26,7 @@
  * kernel/trace/trace_syscalls.c still wants to know the system
  * call address.
  */
-#define __SYSCALL(nr, sym) __x64_##sym,
+#define __SYSCALL(nr, sym) (void *)&__x64_##sym,
 const sys_call_ptr_t sys_call_table[] = {
 #include <asm/syscalls_64.h>
 };
