@@ -4826,8 +4826,15 @@ static int validate_ibt(struct objtool_file *file)
 		    !strcmp(sec->name, "__patchable_function_entries"))
 			continue;
 
-		for_each_reloc(sec->rsec, reloc)
+		for_each_reloc(sec->rsec, reloc) {
+			struct symbol *sym = find_symbol_containing(reloc->sec->base,
+								    reloc_offset(reloc));
+
+			if (sym && !strcmp(sym->name, "sys_call_table"))
+				continue;
+
 			warnings += validate_ibt_data_reloc(file, reloc);
+		}
 	}
 
 	return warnings;

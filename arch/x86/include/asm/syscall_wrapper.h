@@ -7,9 +7,10 @@
 #define _ASM_X86_SYSCALL_WRAPPER_H
 
 #include <asm/ptrace.h>
+#include <asm/ibt.h>
 
-extern long __x64_sys_ni_syscall(const struct pt_regs *regs);
-extern long __ia32_sys_ni_syscall(const struct pt_regs *regs);
+extern __noendbr long __x64_sys_ni_syscall(const struct pt_regs *regs);
+extern __noendbr long __ia32_sys_ni_syscall(const struct pt_regs *regs);
 
 /*
  * Instead of the generic __SYSCALL_DEFINEx() definition, the x86 version takes
@@ -83,15 +84,15 @@ extern long __ia32_sys_ni_syscall(const struct pt_regs *regs);
 			__MAP(x, __SC_TYPE, __VA_ARGS__))		\
 
 #define __SYS_STUB0(abi, name)						\
-	long __##abi##_##name(const struct pt_regs *regs);		\
+	long __noendbr __##abi##_##name(const struct pt_regs *regs);		\
 	ALLOW_ERROR_INJECTION(__##abi##_##name, ERRNO);			\
-	long __##abi##_##name(const struct pt_regs *regs)		\
+	long __noendbr __##abi##_##name(const struct pt_regs *regs)		\
 		__alias(__do_##name);
 
 #define __SYS_STUBx(abi, name, ...)					\
-	long __##abi##_##name(const struct pt_regs *regs);		\
+	long __noendbr __##abi##_##name(const struct pt_regs *regs);		\
 	ALLOW_ERROR_INJECTION(__##abi##_##name, ERRNO);			\
-	long __##abi##_##name(const struct pt_regs *regs)		\
+	long __noendbr __##abi##_##name(const struct pt_regs *regs)		\
 	{								\
 		return __se_##name(__VA_ARGS__);			\
 	}
@@ -257,8 +258,8 @@ extern long __ia32_sys_ni_syscall(const struct pt_regs *regs);
  * For VSYSCALLS, we need to declare these three syscalls with the new
  * pt_regs-based calling convention for in-kernel use.
  */
-long __x64_sys_getcpu(const struct pt_regs *regs);
-long __x64_sys_gettimeofday(const struct pt_regs *regs);
-long __x64_sys_time(const struct pt_regs *regs);
+long __noendbr __x64_sys_getcpu(const struct pt_regs *regs);
+long __noendbr __x64_sys_gettimeofday(const struct pt_regs *regs);
+long __noendbr __x64_sys_time(const struct pt_regs *regs);
 
 #endif /* _ASM_X86_SYSCALL_WRAPPER_H */
