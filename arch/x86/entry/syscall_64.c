@@ -34,17 +34,26 @@ const sys_call_ptr_t sys_call_table[] = {
 #define __SYSCALL(nr, sym) case nr: return __x64_##sym(regs);
 
 /* The unsigned int @nr argument is intentional as it creates denser code */
-static noinline long x64_sys_call(const struct pt_regs *regs, unsigned int nr)
+static noinstr long x64_sys_call(const struct pt_regs *regs, unsigned int nr)
 {
+	/*
+	 * Because -fno-jump-tables, this compiles into a binary branch tree
+	 * rather than a jump-table. As such @nr is not used as an array
+	 * index. Additionally, this is an out-of-line function on purpose,
+	 * such that all the actual syscall function calls are tail-calls,
+	 * returning to our caller for the common bits.
+	 */
+	instrumentation_weak();
 	switch (nr) {
 	#include <asm/syscalls_64.h>
 	default: return __x64_sys_ni_syscall(regs);
 	}
 }
 
-static noinline long x32_sys_call(const struct pt_regs *regs, unsigned int nr)
+static noinstr long x32_sys_call(const struct pt_regs *regs, unsigned int nr)
 {
 #ifdef CONFIG_X86_X32_ABI
+	instrumentation_weak();
 	switch (nr) {
 	#include <asm/syscalls_x32.h>
 	default: return __x64_sys_ni_syscall(regs);
