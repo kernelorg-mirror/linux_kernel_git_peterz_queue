@@ -131,7 +131,7 @@ static __always_inline bool int80_is_external(void)
  *   eax:				system call number
  *   ebx, ecx, edx, esi, edi, ebp:	arg1 - arg 6
  */
-__visible noinstr void do_int80_emulation(struct pt_regs *regs)
+__visible noinstr __noendbr void do_int80_emulation(struct pt_regs *regs)
 {
 	int nr;
 
@@ -248,7 +248,7 @@ DEFINE_FREDENTRY_RAW(int80_emulation)
 #else /* CONFIG_IA32_EMULATION */
 
 /* Handles int $0x80 on a 32bit kernel */
-__visible noinstr void do_int80_syscall_32(struct pt_regs *regs)
+__visible noinstr __noendbr void do_int80_syscall_32(struct pt_regs *regs)
 {
 	int nr = syscall_32_enter(regs);
 
@@ -268,7 +268,7 @@ __visible noinstr void do_int80_syscall_32(struct pt_regs *regs)
 }
 #endif /* !CONFIG_IA32_EMULATION */
 
-static noinstr bool __do_fast_syscall_32(struct pt_regs *regs)
+static noinstr __noendbr bool __do_fast_syscall_32(struct pt_regs *regs)
 {
 	int nr = syscall_32_enter(regs);
 	int res;
@@ -317,7 +317,7 @@ static noinstr bool __do_fast_syscall_32(struct pt_regs *regs)
 }
 
 /* Returns true to return using SYSEXIT/SYSRETL, or false to use IRET */
-__visible noinstr bool do_fast_syscall_32(struct pt_regs *regs)
+__visible noinstr __noendbr bool do_fast_syscall_32(struct pt_regs *regs)
 {
 	/*
 	 * Called using the internal vDSO SYSENTER/SYSCALL32 calling
@@ -364,7 +364,7 @@ __visible noinstr bool do_fast_syscall_32(struct pt_regs *regs)
 }
 
 /* Returns true to return using SYSEXIT/SYSRETL, or false to use IRET */
-__visible noinstr bool do_SYSENTER_32(struct pt_regs *regs)
+__visible noinstr __noendbr bool do_SYSENTER_32(struct pt_regs *regs)
 {
 	/* SYSENTER loses RSP, but the vDSO saved it in RBP. */
 	regs->sp = regs->bp;

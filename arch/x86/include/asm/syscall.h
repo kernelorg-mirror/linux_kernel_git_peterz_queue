@@ -164,13 +164,13 @@ static inline int syscall_get_arch(struct task_struct *task)
 		? AUDIT_ARCH_I386 : AUDIT_ARCH_X86_64;
 }
 
-bool do_syscall_64(struct pt_regs *regs, int nr);
-void do_int80_emulation(struct pt_regs *regs);
+__noendbr bool do_syscall_64(struct pt_regs *regs, int nr);
+__noendbr void do_int80_emulation(struct pt_regs *regs);
 
 #endif	/* CONFIG_X86_32 */
 
-void do_int80_syscall_32(struct pt_regs *regs);
-bool do_fast_syscall_32(struct pt_regs *regs);
-bool do_SYSENTER_32(struct pt_regs *regs);
+__noendbr void do_int80_syscall_32(struct pt_regs *regs);
+__noendbr bool do_fast_syscall_32(struct pt_regs *regs);
+__noendbr bool do_SYSENTER_32(struct pt_regs *regs);
 
 #endif	/* _ASM_X86_SYSCALL_H */

@@ -33,7 +33,7 @@ const sys_call_ptr_t sys_call_table[] = {
 #undef  __SYSCALL
 
 #define __SYSCALL(nr, sym) case nr: return __x64_##sym(regs);
-static noinstr long x64_sys_call(const struct pt_regs *regs, unsigned int nr)
+static noinstr __noendbr long x64_sys_call(const struct pt_regs *regs, unsigned int nr)
 {
 	/*
 	 * Because -fno-jump-tables, this compiles into a binary branch tree
@@ -51,7 +51,7 @@ static noinstr long x64_sys_call(const struct pt_regs *regs, unsigned int nr)
 }
 
 #ifdef CONFIG_X86_X32_ABI
-static noinstr long x32_sys_call(const struct pt_regs *regs, unsigned int nr)
+static noinstr __noendbr long x32_sys_call(const struct pt_regs *regs, unsigned int nr)
 {
 	instrumentation_begin();
 	switch (nr) {
@@ -100,7 +100,7 @@ static __always_inline bool do_syscall_x32(struct pt_regs *regs, int nr)
 }
 
 /* Returns true to return using SYSRET, or false to use IRET */
-__visible noinstr bool do_syscall_64(struct pt_regs *regs, int nr)
+__visible noinstr __noendbr bool do_syscall_64(struct pt_regs *regs, int nr)
 {
 	nr = syscall_enter_from_user_mode(regs, nr);
 
