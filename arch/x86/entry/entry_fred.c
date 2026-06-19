@@ -234,7 +234,7 @@ static noinstr void fred_swexc(struct pt_regs *regs, unsigned long error_code)
 	}
 }
 
-__visible noinstr void fred_entry_from_user(struct pt_regs *regs)
+__visible noinstr __noendbr void fred_entry_from_user(struct pt_regs *regs)
 {
 	unsigned long error_code = regs->orig_ax;
 
@@ -266,7 +266,7 @@ __visible noinstr void fred_entry_from_user(struct pt_regs *regs)
 	return fred_bad_type(regs, error_code);
 }
 
-__visible noinstr void fred_entry_from_kernel(struct pt_regs *regs)
+__visible noinstr __noendbr void fred_entry_from_kernel(struct pt_regs *regs)
 {
 	unsigned long error_code = regs->orig_ax;
 
@@ -295,7 +295,7 @@ __visible noinstr void fred_entry_from_kernel(struct pt_regs *regs)
 }
 
 #if IS_ENABLED(CONFIG_KVM_INTEL)
-__visible noinstr void __fred_entry_from_kvm(struct pt_regs *regs)
+__visible noinstr __noendbr void __fred_entry_from_kvm(struct pt_regs *regs)
 {
 	switch (regs->fred_ss.type) {
 	case EVENT_TYPE_EXTINT:

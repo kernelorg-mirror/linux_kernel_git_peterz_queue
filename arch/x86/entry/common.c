@@ -15,7 +15,7 @@
  * purely a signal that an NMI/IRQ is pending, i.e. the event that triggered
  * the VM-Exit is held pending until it's unblocked in the host.
  */
-noinstr void x86_entry_from_kvm(unsigned int event_type, unsigned int vector)
+noinstr __noendbr void x86_entry_from_kvm(unsigned int event_type, unsigned int vector)
 {
 	if (event_type == EVENT_TYPE_EXTINT) {
 #ifdef CONFIG_X86_64
