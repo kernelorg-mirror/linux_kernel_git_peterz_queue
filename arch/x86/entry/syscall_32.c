@@ -41,12 +41,14 @@ const sys_call_ptr_t sys_call_table[] = {
 #endif
 
 #define __SYSCALL(nr, sym) case nr: return __ia32_##sym(regs);
-long ia32_sys_call(const struct pt_regs *regs, unsigned int nr)
+static noinstr long ia32_sys_call(const struct pt_regs *regs, unsigned int nr)
 {
+	instrumentation_begin();
 	switch (nr) {
 	#include <asm/syscalls_32.h>
 	default: return __ia32_sys_ni_syscall(regs);
 	}
+	instrumentation_end();
 }
 
 static __always_inline int syscall_32_enter(struct pt_regs *regs)
@@ -79,7 +81,9 @@ static __always_inline void do_syscall_32_irqs_on(struct pt_regs *regs, int nr)
 	unsigned int unr = nr;
 
 	if (likely(unr < IA32_NR_syscalls)) {
+#ifdef CONFIG_X86_32
 		unr = array_index_nospec(unr, IA32_NR_syscalls);
+#endif
 		regs->ax = ia32_sys_call(regs, unr);
 	} else if (nr != -1) {
 		regs->ax = __ia32_sys_ni_syscall(regs);
