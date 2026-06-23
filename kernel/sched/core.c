@@ -6115,25 +6115,6 @@ static inline void schedule_debug(struct task_struct *prev, bool preempt)
 	schedstat_inc(this_rq()->sched_count);
 }
 
-static void prev_balance(struct rq *rq, struct rq_flags *rf)
-{
-	const struct sched_class *start_class = rq->donor->sched_class;
-	const struct sched_class *class;
-
-	/*
-	 * We must do the balancing pass before put_prev_task(), such
-	 * that when we release the rq->lock the task is in the same
-	 * state as before we took rq->lock.
-	 *
-	 * We can terminate the balance pass as soon as we know there is
-	 * a runnable task of @class priority or higher.
-	 */
-	for_active_class_range(class, start_class, &idle_sched_class) {
-		if (class->balance && class->balance(rq, rf))
-			break;
-	}
-}
-
 /*
  * Pick up the highest-prio task:
  */
@@ -6171,8 +6152,6 @@ __pick_next_task(struct rq *rq, struct rq_flags *rf)
 	}
 
 restart:
-	prev_balance(rq, rf);
-
 	for_each_active_class(class) {
 		p = class->pick_task(rq, rf);
 		if (unlikely(p == RETRY_TASK))
@@ -6281,8 +6260,6 @@ pick_next_task(struct rq *rq, struct rq_flags *rf)
 		rq->core_dl_server = NULL;
 		goto out_set_next;
 	}
-
-	prev_balance(rq, rf);
 
 	smt_mask = cpu_smt_mask(cpu);
 
