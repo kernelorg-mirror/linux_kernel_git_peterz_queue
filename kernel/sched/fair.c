@@ -10062,9 +10062,6 @@ again:
 	return p;
 
 idle:
-	if (sched_core_enabled(rq))
-		return NULL;
-
 	new_tasks = sched_balance_newidle(rq, rf);
 	if (new_tasks < 0)
 		return RETRY_TASK;
@@ -10906,7 +10903,8 @@ int can_migrate_task(struct task_struct *p, struct lb_env *env)
 	env->flags &= ~LBF_ALL_PINNED;
 
 	if (task_on_cpu(env->src_rq, p) ||
-	    task_current_donor(env->src_rq, p)) {
+	    task_current_donor(env->src_rq, p) ||
+	    task_on_core(env->src_rq, p)) {
 		schedstat_inc(p->stats.nr_failed_migrations_running);
 		return 0;
 	}
