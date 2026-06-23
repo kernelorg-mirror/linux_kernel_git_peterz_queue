@@ -1596,7 +1596,7 @@ static void check_preempt_equal_prio(struct rq *rq, struct task_struct *p)
 	resched_curr(rq);
 }
 
-static int balance_rt(struct rq *rq, struct rq_flags *rf)
+static void balance_rt(struct rq *rq, struct rq_flags *rf)
 {
 	/*
 	 * Note, rq->donor may change during rq lock drops,
@@ -1615,8 +1615,6 @@ static int balance_rt(struct rq *rq, struct rq_flags *rf)
 		pull_rt_task(rq);
 		rq_repin_lock(rq, rf);
 	}
-
-	return sched_stop_runnable(rq) || sched_dl_runnable(rq) || sched_rt_runnable(rq);
 }
 
 /*
@@ -1718,14 +1716,15 @@ static struct task_struct *_pick_next_task_rt(struct rq *rq)
 
 static struct task_struct *pick_task_rt(struct rq *rq, struct rq_flags *rf)
 {
-	struct task_struct *p;
+	rq_modified_begin(rq, &rt_sched_class);
+	balance_rt(rq, rf);
+	if (rq_modified_above(rq, &rt_sched_class))
+		return RETRY_TASK;
 
 	if (!sched_rt_runnable(rq))
 		return NULL;
 
-	p = _pick_next_task_rt(rq);
-
-	return p;
+	return _pick_next_task_rt(rq);
 }
 
 static void put_prev_task_rt(struct rq *rq, struct task_struct *p, struct task_struct *next)
@@ -2616,7 +2615,6 @@ DEFINE_SCHED_CLASS(rt) = {
 	.put_prev_task		= put_prev_task_rt,
 	.set_next_task          = set_next_task_rt,
 
-	.balance		= balance_rt,
 	.select_task_rq		= select_task_rq_rt,
 	.set_cpus_allowed       = set_cpus_allowed_common,
 	.rq_online              = rq_online_rt,

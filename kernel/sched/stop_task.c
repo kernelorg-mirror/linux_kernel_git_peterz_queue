@@ -15,12 +15,6 @@ select_task_rq_stop(struct task_struct *p, int cpu, int flags)
 	return task_cpu(p); /* stop tasks as never migrate */
 }
 
-static int
-balance_stop(struct rq *rq, struct rq_flags *rf)
-{
-	return sched_stop_runnable(rq);
-}
-
 static void
 wakeup_preempt_stop(struct rq *rq, struct task_struct *p, int flags)
 {
@@ -110,7 +104,6 @@ DEFINE_SCHED_CLASS(stop) = {
 	.put_prev_task		= put_prev_task_stop,
 	.set_next_task          = set_next_task_stop,
 
-	.balance		= balance_stop,
 	.select_task_rq		= select_task_rq_stop,
 	.set_cpus_allowed	= set_cpus_allowed_common,
 

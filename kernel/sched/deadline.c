@@ -2705,7 +2705,7 @@ static void check_preempt_equal_dl(struct rq *rq, struct task_struct *p)
 	resched_curr(rq);
 }
 
-static int balance_dl(struct rq *rq, struct rq_flags *rf)
+static void balance_dl(struct rq *rq, struct rq_flags *rf)
 {
 	/*
 	 * Note, rq->donor may change during rq lock drops,
@@ -2724,8 +2724,6 @@ static int balance_dl(struct rq *rq, struct rq_flags *rf)
 		pull_dl_task(rq);
 		rq_repin_lock(rq, rf);
 	}
-
-	return sched_stop_runnable(rq) || sched_dl_runnable(rq);
 }
 
 /*
@@ -2822,6 +2820,11 @@ static struct task_struct *__pick_task_dl(struct rq *rq, struct rq_flags *rf)
 	struct sched_dl_entity *dl_se;
 	struct dl_rq *dl_rq = &rq->dl;
 	struct task_struct *p;
+
+	rq_modified_begin(rq, &dl_sched_class);
+	balance_dl(rq, rf);
+	if (rq_modified_above(rq, &dl_sched_class))
+		return RETRY_TASK;
 
 again:
 	if (!sched_dl_runnable(rq))
@@ -3654,7 +3657,6 @@ DEFINE_SCHED_CLASS(dl) = {
 	.put_prev_task		= put_prev_task_dl,
 	.set_next_task		= set_next_task_dl,
 
-	.balance		= balance_dl,
 	.select_task_rq		= select_task_rq_dl,
 	.migrate_task_rq	= migrate_task_rq_dl,
 	.set_cpus_allowed       = set_cpus_allowed_dl,
