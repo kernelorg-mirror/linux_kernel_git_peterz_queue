@@ -1594,6 +1594,14 @@ static inline bool task_has_sched_core(struct task_struct *p)
 	return !!p->core_cookie;
 }
 
+static inline bool task_on_core(struct rq *rq, struct task_struct *p)
+{
+	if (sched_core_disabled())
+		return false;
+
+	return rq->core_pick == p;
+}
+
 #else /* !CONFIG_SCHED_CORE: */
 
 static inline bool sched_core_enabled(struct rq *rq)
@@ -1635,6 +1643,11 @@ static inline bool sched_group_cookie_match(struct rq *rq,
 }
 
 static inline bool task_has_sched_core(struct task_struct *p)
+{
+	return false;
+}
+
+static inline bool task_on_core(struct rq *rq, struct task_struct *p)
 {
 	return false;
 }
@@ -4269,7 +4282,7 @@ void move_queued_task_locked(struct rq *src_rq, struct rq *dst_rq, struct task_s
 static inline
 bool task_is_pushable(struct rq *rq, struct task_struct *p, int cpu)
 {
-	if (!task_on_cpu(rq, p) &&
+	if (!task_on_cpu(rq, p) && !task_on_core(rq, p) &&
 	    cpumask_test_cpu(cpu, &p->cpus_mask))
 		return true;
 
