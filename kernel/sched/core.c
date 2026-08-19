@@ -6246,14 +6246,14 @@ static struct task_struct *
 pick_next_task(struct rq *rq, struct rq_flags *rf)
 	__must_hold(__rq_lockp(rq))
 {
+	bool core_clock_updated = (rq == rq->core);
 	struct task_struct *next, *p, *max;
 	const struct cpumask *smt_mask;
+	int i, cpu, seq, occ = 0;
 	bool fi_before = false;
-	bool core_clock_updated = (rq == rq->core);
-	unsigned long cookie;
-	int i, cpu, occ = 0;
-	struct rq *rq_i;
 	bool need_sync = false;
+	unsigned long cookie;
+	struct rq *rq_i;
 
 	if (!sched_core_enabled(rq))
 		return __pick_next_task(rq, rf);
@@ -6327,7 +6327,7 @@ restart:
 	 * However, preemptions can cause multiple picks on the same task set.
 	 * 'Fix' this by also increasing @task_seq for every pick.
 	 */
-	rq->core->core_task_seq++;
+	seq = ++rq->core->core_task_seq;
 
 	/*
 	 * Optimize for common case where this CPU has no cookies
@@ -6344,6 +6344,15 @@ restart:
 		}
 
 		if (!next->core_cookie) {
+			/*
+			 * pick_task() can drop the core rq lock through
+			 * newidle balance. If a sibling established a
+			 * core-wide cookie while the lock was dropped, the
+			 * uncookied no-sync fast path is no longer valid.
+			 */
+			if (unlikely(rq->core->core_cookie))
+				goto restart;
+
 			rq->core_pick = NULL;
 			rq->core_dl_server = NULL;
 			/*
@@ -6375,7 +6384,8 @@ restart:
 			update_rq_clock(rq_i);
 
 		p = pick_task(rq_i, rf);
-		if (unlikely(p == RETRY_TASK)) {
+		if (unlikely(seq != rq->core->core_task_seq ||
+			     WARN_ON_ONCE(p == RETRY_TASK))) {
 			/* rq lock may have been dropped, clocks invalidated */
 			core_clock_updated = false;
 			if (!(rq->clock_update_flags & RQCF_UPDATED))
@@ -6405,7 +6415,7 @@ restart:
 			if (cookie)
 				p = sched_core_find(rq_i, cookie);
 			if (!p)
-				p = idle_sched_class.pick_task(rq_i, rf);
+				p = idle_sched_class.pick_task(rq_i, NULL);
 		}
 
 		rq_i->core_pick = p;
