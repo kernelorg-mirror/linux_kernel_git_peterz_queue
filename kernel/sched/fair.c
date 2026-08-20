@@ -13417,6 +13417,7 @@ static int sched_balance_rq(int this_cpu, struct rq *this_rq,
 			struct sched_domain *sd, enum cpu_idle_type idle,
 			int *continue_balancing)
 {
+	bool lock_rq = false, unlock_rq = idle == CPU_NEWLY_IDLE;
 	int ld_moved, cur_ld_moved, active_balance = 0;
 	struct sched_domain *sd_parent = sd->parent;
 	struct sched_group *group;
@@ -13484,6 +13485,12 @@ redo:
 		 * correctly treated as an imbalance.
 		 */
 		env.loop_max  = min(sysctl_sched_nr_migrate, busiest->nr_running);
+
+		if (unlock_rq) {
+			raw_spin_rq_unlock(this_rq);
+			unlock_rq = false;
+			lock_rq = true;
+		}
 
 more_balance:
 		rq_lock_irqsave(busiest, &rf);
@@ -13613,6 +13620,12 @@ more_balance:
 	if (!need_active_balance(&env))
 		goto out_unbalanced;
 
+	if (unlock_rq) {
+		raw_spin_rq_unlock(this_rq);
+		unlock_rq = false;
+		lock_rq = true;
+	}
+
 	scoped_guard (raw_spin_rq_lock_irqsave, busiest) {
 		/*
 		 * Don't kick the active_load_balance_cpu_stop,
@@ -13706,6 +13719,8 @@ out_one_pinned:
 out:
 	if (need_unlock)
 		atomic_set_release(&sched_balance_running, 0);
+	if (lock_rq)
+		raw_spin_rq_lock(this_rq);
 
 	return ld_moved;
 }
@@ -14582,8 +14597,6 @@ static void sched_balance_newidle(struct rq *this_rq, struct rq_flags *rf)
 	t0 = sched_clock_cpu(this_cpu);
 	__sched_balance_update_blocked_averages(this_rq);
 
-	raw_spin_rq_unlock(this_rq);
-
 	for_each_domain(this_cpu, sd) {
 		u64 domain_cost;
 
@@ -14633,8 +14646,6 @@ static void sched_balance_newidle(struct rq *this_rq, struct rq_flags *rf)
 		if (pulled_task || !continue_balancing)
 			break;
 	}
-
-	raw_spin_rq_lock(this_rq);
 
 	if (curr_cost > this_rq->max_idle_balance_cost)
 		this_rq->max_idle_balance_cost = curr_cost;
