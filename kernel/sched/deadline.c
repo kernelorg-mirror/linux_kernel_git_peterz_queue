@@ -3250,16 +3250,12 @@ static void pull_dl_task(struct rq *this_rq)
 				   src_rq->dl.earliest_dl.next))
 			continue;
 
+		if (!has_pushable_dl_tasks(src_rq))
+			continue;
+
 		/* Might drop this_rq->lock */
 		push_task = NULL;
 		double_lock_balance(this_rq, src_rq);
-
-		/*
-		 * If there are no more pullable tasks on the
-		 * rq, we're done with it.
-		 */
-		if (src_rq->dl.dl_nr_running <= 1)
-			goto skip;
 
 		p = pick_earliest_pushable_dl_task(src_rq, this_cpu);
 
