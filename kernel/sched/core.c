@@ -6252,7 +6252,6 @@ static struct task_struct *
 pick_next_task(struct rq *rq, struct rq_flags *rf)
 	__must_hold(__rq_lockp(rq))
 {
-	bool core_clock_updated = (rq == rq->core);
 	struct task_struct *next, *p, *max;
 	const struct cpumask *smt_mask;
 	int i, cpu, seq, occ = 0;
@@ -6308,10 +6307,7 @@ restart:
 	/* reset state */
 	rq->core->core_cookie = 0UL;
 	if (rq->core->core_forceidle_count) {
-		if (!core_clock_updated) {
-			update_rq_clock(rq->core);
-			core_clock_updated = true;
-		}
+		__update_rq_clock(rq->core);
 		sched_core_account_forceidle(rq);
 		/* reset after accounting force idle */
 		rq->core->core_forceidle_start = 0;
@@ -6340,14 +6336,11 @@ restart:
 	 * and there are no cookied tasks running on siblings.
 	 */
 	if (!need_sync) {
+		__update_rq_clock(rq);
+
 		next = pick_task(rq, rf);
-		if (unlikely(next == RETRY_TASK)) {
-			/* rq lock may have been dropped, clocks invalidated */
-			core_clock_updated = false;
-			if (!(rq->clock_update_flags & RQCF_UPDATED))
-				update_rq_clock(rq);
+		if (unlikely(next == RETRY_TASK))
 			goto restart;
-		}
 
 		if (!next->core_cookie) {
 			/*
@@ -6386,18 +6379,12 @@ restart:
 		 * pick_next_task(). If the current cpu is not the core,
 		 * the core may also have been updated above.
 		 */
-		if (i != cpu && (rq_i != rq->core || !core_clock_updated))
-			update_rq_clock(rq_i);
+		__update_rq_clock(rq_i);
 
 		p = pick_task(rq_i, rf);
 		if (unlikely(seq != rq->core->core_task_seq ||
-			     WARN_ON_ONCE(p == RETRY_TASK))) {
-			/* rq lock may have been dropped, clocks invalidated */
-			core_clock_updated = false;
-			if (!(rq->clock_update_flags & RQCF_UPDATED))
-				update_rq_clock(rq);
+			     WARN_ON_ONCE(p == RETRY_TASK)))
 			goto restart;
-		}
 
 		rq_i->core_pick = p;
 		rq_i->core_dl_server = rq_i->dl_server;
