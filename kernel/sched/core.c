@@ -6208,11 +6208,16 @@ extern void task_vruntime_update(struct rq *rq, struct task_struct *p, bool in_f
 
 static void queue_core_balance(struct rq *rq);
 
+static void opt_update_rq_clock(struct rq *rq)
+{
+	if (!(rq->clock_update_flags & RQCF_UPDATED))
+		update_rq_clock(rq);
+}
+
 static struct task_struct *
 pick_next_task(struct rq *rq, struct rq_flags *rf)
 	__must_hold(__rq_lockp(rq))
 {
-	bool core_clock_updated = (rq == rq->core);
 	struct task_struct *next, *p, *max;
 	const struct cpumask *smt_mask;
 	int i, cpu, seq, occ = 0;
@@ -6269,10 +6274,7 @@ restart:
 	/* reset state */
 	rq->core->core_cookie = 0UL;
 	if (rq->core->core_forceidle_count) {
-		if (!core_clock_updated) {
-			update_rq_clock(rq->core);
-			core_clock_updated = true;
-		}
+		opt_update_rq_clock(rq->core);
 		sched_core_account_forceidle(rq);
 		/* reset after accounting force idle */
 		rq->core->core_forceidle_start = 0;
@@ -6299,14 +6301,11 @@ restart:
 	 * and there are no cookied tasks running on siblings.
 	 */
 	if (!need_sync) {
+		opt_update_rq_clock(rq);
+
 		next = pick_task(rq, rf);
-		if (unlikely(next == RETRY_TASK)) {
-			/* rq lock may have been dropped, clocks invalidated */
-			core_clock_updated = false;
-			if (!(rq->clock_update_flags & RQCF_UPDATED))
-				update_rq_clock(rq);
+		if (unlikely(next == RETRY_TASK))
 			goto restart;
-		}
 
 		if (!next->core_cookie) {
 			rq->core_pick = NULL;
@@ -6329,6 +6328,7 @@ restart:
 	 */
 	max = NULL;
 	for_each_cpu_wrap(i, smt_mask, cpu) {
+		struct rq_flags rf_i = *rf;
 		rq_i = cpu_rq(i);
 
 		/*
@@ -6336,18 +6336,12 @@ restart:
 		 * pick_next_task(). If the current cpu is not the core,
 		 * the core may also have been updated above.
 		 */
-		if (i != cpu && (rq_i != rq->core || !core_clock_updated))
-			update_rq_clock(rq_i);
+		opt_update_rq_clock(rq_i);
 
-		p = pick_task(rq_i, rf);
+		p = pick_task(rq_i, &rf_i);
 		if (unlikely(seq != rq->core->core_task_seq ||
-			     WARN_ON_ONCE(p == RETRY_TASK))) {
-			/* rq lock may have been dropped, clocks invalidated */
-			core_clock_updated = false;
-			if (!(rq->clock_update_flags & RQCF_UPDATED))
-				update_rq_clock(rq);
+			     WARN_ON_ONCE(p == RETRY_TASK)))
 			goto restart;
-		}
 
 		rq_i->core_pick = p;
 		rq_i->core_dl_server = rq_i->dl_server;
@@ -6355,6 +6349,13 @@ restart:
 		if (!max || prio_less(max, p, fi_before))
 			max = p;
 	}
+
+	/*
+	 * The above loop does @cpu first, if any sibling (which comes later)
+	 * does a LOCK+UNLOCK of @rq in order to (try) steal a task, our
+	 * RQCF_UPDATED got lost.
+	 */
+	rq->clock_update_flags |= RQCF_UPDATED;
 
 	cookie = rq->core->core_cookie = max->core_cookie;
 
