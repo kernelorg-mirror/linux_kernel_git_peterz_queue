@@ -3809,7 +3809,7 @@ void scx_tick(struct rq *rq)
 	update_other_load_avgs(rq);
 }
 
-static void task_tick_scx(struct rq *rq, struct task_struct *curr, int queued)
+static void task_tick_scx(struct rq *rq, struct task_struct *curr, int hrtick)
 {
 	struct scx_sched *sch = scx_task_sched(curr);
 
