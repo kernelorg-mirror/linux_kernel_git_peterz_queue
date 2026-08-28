@@ -6154,7 +6154,7 @@ static inline unsigned long cfs_rq_load_avg(struct cfs_rq *cfs_rq)
 	return cfs_rq->avg.load_avg;
 }
 
-static int sched_balance_newidle(struct rq *this_rq, struct rq_flags *rf)
+static void sched_balance_newidle(struct rq *this_rq, struct rq_flags *rf)
 	__must_hold(__rq_lockp(this_rq));
 
 static inline unsigned long task_util(struct task_struct *p)
@@ -10270,11 +10270,17 @@ struct task_struct *pick_task_fair(struct rq *rq, struct rq_flags *rf)
 	struct cfs_rq *cfs_rq = &rq->cfs;
 	struct sched_entity *se;
 	struct task_struct *p;
-	int new_tasks;
 
 again:
-	if (!cfs_rq->h_nr_queued)
-		goto idle;
+	if (unlikely(!cfs_rq->h_nr_queued)) {
+		rq_modified_begin(rq, &fair_sched_class);
+		sched_balance_newidle(rq, rf);
+		if (rq_modified_above(rq, &fair_sched_class))
+			return RETRY_TASK;
+
+		if (!cfs_rq->h_nr_queued)
+			return NULL;
+	}
 
 	/* Might not have done put_prev_entity() */
 	if (cfs_rq->curr && cfs_rq->curr->on_rq)
@@ -10286,17 +10292,6 @@ again:
 
 	p = task_of(se);
 	return p;
-
-idle:
-	if (sched_core_enabled(rq))
-		return NULL;
-
-	new_tasks = sched_balance_newidle(rq, rf);
-	if (new_tasks < 0)
-		return RETRY_TASK;
-	if (new_tasks > 0)
-		goto again;
-	return NULL;
 }
 
 static struct task_struct *
@@ -14823,13 +14818,8 @@ static inline void nohz_newidle_balance(struct rq *this_rq) { }
 /*
  * sched_balance_newidle is called by schedule() if this_cpu is about to become
  * idle. Attempts to pull tasks from other CPUs.
- *
- * Returns:
- *   < 0 - we released the lock and there are !fair tasks present
- *     0 - failed, no new tasks
- *   > 0 - success, new (fair) tasks present
  */
-static int sched_balance_newidle(struct rq *this_rq, struct rq_flags *rf)
+static void sched_balance_newidle(struct rq *this_rq, struct rq_flags *rf)
 	__must_hold(__rq_lockp(this_rq))
 {
 	unsigned long next_balance = jiffies + HZ;
@@ -14846,7 +14836,7 @@ static int sched_balance_newidle(struct rq *this_rq, struct rq_flags *rf)
 	 * Return 0; the task will be enqueued when switching to idle.
 	 */
 	if (this_rq->ttwu_pending)
-		return 0;
+		return;
 
 	/*
 	 * We must set idle_stamp _before_ calling sched_balance_rq()
@@ -14859,7 +14849,7 @@ static int sched_balance_newidle(struct rq *this_rq, struct rq_flags *rf)
 	 * Do not pull tasks towards !active CPUs...
 	 */
 	if (!cpu_active(this_cpu))
-		return 0;
+		return;
 
 	/*
 	 * This is OK, because current is on_cpu, which avoids it being picked
@@ -14888,7 +14878,6 @@ static int sched_balance_newidle(struct rq *this_rq, struct rq_flags *rf)
 	t0 = sched_clock_cpu(this_cpu);
 	__sched_balance_update_blocked_averages(this_rq);
 
-	rq_modified_begin(this_rq, &fair_sched_class);
 	raw_spin_rq_unlock(this_rq);
 
 	for_each_domain(this_cpu, sd) {
@@ -14946,18 +14935,6 @@ static int sched_balance_newidle(struct rq *this_rq, struct rq_flags *rf)
 	if (curr_cost > this_rq->max_idle_balance_cost)
 		this_rq->max_idle_balance_cost = curr_cost;
 
-	/*
-	 * While browsing the domains, we released the rq lock, a task could
-	 * have been enqueued in the meantime. Since we're not going idle,
-	 * pretend we pulled a task.
-	 */
-	if (this_rq->cfs.h_nr_queued && !pulled_task)
-		pulled_task = 1;
-
-	/* If a higher prio class was modified, restart the pick */
-	if (rq_modified_above(this_rq, &fair_sched_class))
-		pulled_task = -1;
-
 out:
 	/* Move the next balance forward */
 	if (time_after(this_rq->next_balance, next_balance))
@@ -14969,8 +14946,6 @@ out:
 		nohz_newidle_balance(this_rq);
 
 	rq_repin_lock(this_rq, rf);
-
-	return pulled_task;
 }
 
 /*
