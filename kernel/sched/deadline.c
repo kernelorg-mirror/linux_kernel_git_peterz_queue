@@ -1129,7 +1129,7 @@ static void __push_dl_task(struct rq *rq, struct rq_flags *rf)
 		 * Nothing relies on rq->lock after this, so its safe to drop
 		 * rq->lock.
 		 */
-		rq_unpin_lock(rq, rf);
+		rq_drop_lock(rq, rf);
 		push_dl_task(rq);
 		rq_repin_lock(rq, rf);
 	}
@@ -2720,7 +2720,7 @@ static int balance_dl(struct rq *rq, struct rq_flags *rf)
 		 * disabled avoiding further scheduler activity on it and we've
 		 * not yet started the picking loop.
 		 */
-		rq_unpin_lock(rq, rf);
+		rq_drop_lock(rq, rf);
 		pull_dl_task(rq);
 		rq_repin_lock(rq, rf);
 	}

@@ -1950,6 +1950,11 @@ static inline void rq_unpin_lock(struct rq *rq, struct rq_flags *rf)
 	lockdep_unpin_lock(__rq_lockp(rq), rf->cookie);
 }
 
+static inline void rq_drop_lock(struct rq *rq, struct rq_flags *rf)
+{
+	rq_unpin_lock(rq, rf);
+}
+
 static inline void rq_repin_lock(struct rq *rq, struct rq_flags *rf)
 {
 	lockdep_repin_lock(__rq_lockp(rq), rf->cookie);

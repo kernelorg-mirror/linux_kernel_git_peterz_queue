@@ -1611,7 +1611,7 @@ static int balance_rt(struct rq *rq, struct rq_flags *rf)
 		 * disabled avoiding further scheduler activity on it and we've
 		 * not yet started the picking loop.
 		 */
-		rq_unpin_lock(rq, rf);
+		rq_drop_lock(rq, rf);
 		pull_rt_task(rq);
 		rq_repin_lock(rq, rf);
 	}

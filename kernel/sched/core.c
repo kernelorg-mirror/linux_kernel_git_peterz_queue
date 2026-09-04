@@ -3855,7 +3855,7 @@ ttwu_do_activate(struct rq *rq, struct task_struct *p, int wake_flags,
 		 * Our task @p is fully woken up and running; so it's safe to
 		 * drop the rq->lock, hereafter rq is only used for statistics.
 		 */
-		rq_unpin_lock(rq, rf);
+		rq_drop_lock(rq, rf);
 		p->sched_class->task_woken(rq, p);
 		rq_repin_lock(rq, rf);
 	}
@@ -4992,7 +4992,7 @@ void wake_up_new_task(struct task_struct *p)
 		 * Nothing relies on rq->lock after this, so it's fine to
 		 * drop it.
 		 */
-		rq_unpin_lock(rq, &rf);
+		rq_drop_lock(rq, &rf);
 		p->sched_class->task_woken(rq, p);
 		rq_repin_lock(rq, &rf);
 	}
@@ -5210,7 +5210,7 @@ struct balance_callback *splice_balance_callbacks(struct rq *rq)
 void __balance_callbacks(struct rq *rq, struct rq_flags *rf)
 {
 	if (rf)
-		rq_unpin_lock(rq, rf);
+		rq_drop_lock(rq, rf);
 	do_balance_callbacks(rq, __splice_balance_callbacks(rq, false));
 	if (rf)
 		rq_repin_lock(rq, rf);
@@ -6848,7 +6848,7 @@ static inline void proxy_release_rq_lock(struct rq *rq, struct rq_flags *rf)
 	 * to pick_again, so the callbacks will get re-established.
 	 */
 	zap_balance_callbacks(rq);
-	rq_unpin_lock(rq, rf);
+	rq_drop_lock(rq, rf);
 	raw_spin_rq_unlock(rq);
 }
 

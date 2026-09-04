@@ -14863,7 +14863,7 @@ static int sched_balance_newidle(struct rq *this_rq, struct rq_flags *rf)
 	 * further scheduler activity on it and we're being very careful to
 	 * re-start the picking loop.
 	 */
-	rq_unpin_lock(this_rq, rf);
+	rq_drop_lock(this_rq, rf);
 
 	sd = rcu_dereference_sched_domain(this_rq->sd);
 	if (!sd)

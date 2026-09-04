@@ -3288,7 +3288,7 @@ static enum scx_dsp_verdict dispatch_pick(struct rq *rq, struct rq_flags *rf,
 {
 	enum scx_dsp_verdict verdict;
 
-	rq_unpin_lock(rq, rf);
+	rq_drop_lock(rq, rf);
 	verdict = dispatch_one(rq, prev);
 	rq_repin_lock(rq, rf);
 	maybe_queue_balance_callback(rq);
@@ -3325,7 +3325,7 @@ static enum scx_dsp_verdict dispatch_core_pick(struct rq *rq, struct rq_flags *r
 	if (rq->scx.flags & SCX_RQ_IN_DISPATCH)
 		return SCX_DSP_NONE;
 
-	rq_unpin_lock(rq, rf);
+	rq_drop_lock(rq, rf);
 
 	verdict = dispatch_one(rq, prev);
 
