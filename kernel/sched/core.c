@@ -7194,9 +7194,9 @@ static void __sched notrace __schedule(int sched_mode)
 	hrtick_schedule_enter(rq);
 
 	/* Promote REQ to ACT */
-	rq->clock_update_flags <<= 1;
+	rq->clock_update_flags |= (rq->clock_update_flags & RQCF_REQ_SKIP) << 1;
 	update_rq_clock(rq);
-	rq->clock_update_flags = RQCF_UPDATED;
+	rq->clock_update_flags &= (RQCF_FREEZE|RQCF_UPDATED);
 
 	switch_count = &prev->nivcsw;
 

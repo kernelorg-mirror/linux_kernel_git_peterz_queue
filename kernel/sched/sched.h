@@ -1790,24 +1790,33 @@ extern void update_rq_clock(struct rq *rq);
  * %RQCF_ACT_SKIP - is set from inside of __schedule() when skipping is
  *  in effect and calls to update_rq_clock() are being ignored.
  *
+ * %RQCF_FREEZE - set from rq_clock_freeze(), much like ACT_SKIP it
+ *  makes update_rq_clock() a noop.
+ *
  * %RQCF_UPDATED - is a debug flag that indicates whether a call has been
  *  made to update_rq_clock() since the last time rq::lock was pinned.
  *
- * If inside of __schedule(), clock_update_flags will have been
- * shifted left (a left shift is a cheap operation for the fast path
- * to promote %RQCF_REQ_SKIP to %RQCF_ACT_SKIP), so you must use,
  *
- *	if (rq-clock_update_flags >= RQCF_UPDATED)
+ * yield():
+ *   will generally result in REQ_SKIP.
  *
- * to check if %RQCF_UPDATED is set. It'll never be shifted more than
- * one position though, because the next rq_unpin_lock() will shift it
- * back.
+ * update_rq_clock():
+ *   sets UPDATED, will not modify rq->clock when NOP_MASK
+ *
+ * schedule():
+ *   will promote REQ_SKIP to ACT_SKIP before its update_rq_clock() to ensure
+ *   the yield() and schedule() appear to happen instantaneous.
+ *
+ * rq_clock_freeze()/rq_clock_thaw():
+ *   set FREEZE to make 'nested' update_rq_clock() calls NOP and avoid
+ *   time being moved forward. Also used in rq_drop_lock()/rq_repin_lock().
  */
 #define RQCF_REQ_SKIP		0x01
 #define RQCF_ACT_SKIP		0x02
-#define RQCF_UPDATED		0x04
+#define RQCF_FREEZE		0x04
+#define RQCF_UPDATED		0x08
 
-#define RQCF_NOP_MASK		(RQCF_ACT_SKIP | RQCF_UPDATED)
+#define RQCF_NOP_MASK		(RQCF_ACT_SKIP | RQCF_FREEZE | RQCF_UPDATED)
 
 static inline void assert_clock_updated(struct rq *rq)
 {
@@ -1815,7 +1824,7 @@ static inline void assert_clock_updated(struct rq *rq)
 	 * The only reason for not seeing a clock update since the
 	 * last rq_pin_lock() is if we're currently skipping updates.
 	 */
-	WARN_ON_ONCE(rq->clock_update_flags < RQCF_ACT_SKIP);
+	WARN_ON_ONCE(!(rq->clock_update_flags & RQCF_UPDATED));
 }
 
 static inline u64 rq_clock(struct rq *rq)
@@ -1851,25 +1860,27 @@ static inline void rq_clock_cancel_skipupdate(struct rq *rq)
 }
 
 /*
- * During cpu offlining and rq wide unthrottling, we can trigger
- * an update_rq_clock() for several cfs and rt runqueues (Typically
- * when using list_for_each_entry_*)
- * rq_clock_start_loop_update() can be called after updating the clock
- * once and before iterating over the list to prevent multiple update.
- * After the iterative traversal, we need to call rq_clock_stop_loop_update()
- * to clear RQCF_ACT_SKIP of rq->clock_update_flags.
+ * FREEZE rq_clock. This is used in a number of places to
+ * ensure things appears to happen at the same time.
+ *
+ * Eg. during cpu offlining and rq wide unthrottling, we can trigger an
+ * update_rq_clock() for several cfs and rt runqueues (Typically when using
+ * list_for_each_entry_*)
  */
-static inline void rq_clock_start_loop_update(struct rq *rq)
+static inline unsigned int rq_clock_freeze(struct rq *rq)
 {
+	unsigned int flags = rq->clock_update_flags;
 	lockdep_assert_rq_held(rq);
-	WARN_ON_ONCE(rq->clock_update_flags & RQCF_ACT_SKIP);
-	rq->clock_update_flags |= RQCF_ACT_SKIP;
+	assert_clock_updated(rq);
+	rq->clock_update_flags |= RQCF_FREEZE;
+	return flags;
 }
 
-static inline void rq_clock_stop_loop_update(struct rq *rq)
+static inline void rq_clock_thaw(struct rq *rq, bool flags)
 {
 	lockdep_assert_rq_held(rq);
-	rq->clock_update_flags &= ~RQCF_ACT_SKIP;
+	rq->clock_update_flags &= ~RQCF_FREEZE;
+	rq->clock_update_flags |= RQCF_UPDATED | (flags & RQCF_FREEZE);
 }
 
 struct rq_flags {
@@ -1938,14 +1949,14 @@ static inline void rq_pin_lock(struct rq *rq, struct rq_flags *rf)
 {
 	rf->cookie = lockdep_pin_lock(__rq_lockp(rq));
 
-	rq->clock_update_flags &= (RQCF_REQ_SKIP|RQCF_ACT_SKIP);
+	rq->clock_update_flags &= ~RQCF_UPDATED;
 	rf->clock_update_flags = 0;
 	assert_balance_callbacks_empty(rq);
 }
 
 static inline void rq_unpin_lock(struct rq *rq, struct rq_flags *rf)
 {
-	if (rq->clock_update_flags > RQCF_ACT_SKIP)
+	if (rq->clock_update_flags & RQCF_UPDATED)
 		rf->clock_update_flags = RQCF_UPDATED;
 
 	scx_rq_clock_invalidate(rq);

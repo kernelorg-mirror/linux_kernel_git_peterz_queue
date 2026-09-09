@@ -5445,6 +5445,7 @@ static inline void clear_tg_load_avg(struct cfs_rq *cfs_rq)
 static void __maybe_unused clear_tg_offline_cfs_rqs(struct rq *rq)
 {
 	struct task_group *tg;
+	unsigned int cuf;
 
 	lockdep_assert_rq_held(rq);
 
@@ -5453,7 +5454,7 @@ static void __maybe_unused clear_tg_offline_cfs_rqs(struct rq *rq)
 	 * set_rq_offline(), so we should skip updating
 	 * the rq clock again in unthrottle_cfs_rq().
 	 */
-	rq_clock_start_loop_update(rq);
+	cuf = rq_clock_freeze(rq);
 
 	guard(rcu)();
 
@@ -5463,7 +5464,7 @@ static void __maybe_unused clear_tg_offline_cfs_rqs(struct rq *rq)
 		clear_tg_load_avg(cfs_rq);
 	}
 
-	rq_clock_stop_loop_update(rq);
+	rq_clock_thaw(rq, cuf);
 }
 
 /*
@@ -7331,6 +7332,7 @@ static void __cfsb_csd_unthrottle(void *arg)
 {
 	struct cfs_rq *cursor, *tmp;
 	struct rq *rq = arg;
+	unsigned int cuf;
 
 	guard(rq_lock)(rq);
 
@@ -7340,7 +7342,7 @@ static void __cfsb_csd_unthrottle(void *arg)
 	 * Do it once and skip the potential next ones.
 	 */
 	update_rq_clock(rq);
-	rq_clock_start_loop_update(rq);
+	cuf = rq_clock_freeze(rq);
 
 	/*
 	 * Since we hold rq lock we're safe from concurrent manipulation of
@@ -7359,7 +7361,7 @@ static void __cfsb_csd_unthrottle(void *arg)
 			unthrottle_cfs_rq(cursor);
 	}
 
-	rq_clock_stop_loop_update(rq);
+	rq_clock_thaw(rq, cuf);
 }
 
 static inline void __unthrottle_cfs_rq_async(struct cfs_rq *cfs_rq)
@@ -7865,6 +7867,7 @@ static void __maybe_unused update_runtime_enabled(struct rq *rq)
 static void __maybe_unused unthrottle_offline_cfs_rqs(struct rq *rq)
 {
 	struct task_group *tg;
+	unsigned int cuf;
 
 	lockdep_assert_rq_held(rq);
 
@@ -7877,7 +7880,7 @@ static void __maybe_unused unthrottle_offline_cfs_rqs(struct rq *rq)
 	 * set_rq_offline(), so we should skip updating
 	 * the rq clock again in unthrottle_cfs_rq().
 	 */
-	rq_clock_start_loop_update(rq);
+	cuf = rq_clock_freeze(rq);
 
 	guard(rcu)();
 
@@ -7904,7 +7907,7 @@ static void __maybe_unused unthrottle_offline_cfs_rqs(struct rq *rq)
 		unthrottle_cfs_rq(cfs_rq);
 	}
 
-	rq_clock_stop_loop_update(rq);
+	rq_clock_thaw(rq, cuf);
 }
 
 bool cfs_task_bw_constrained(struct task_struct *p)
