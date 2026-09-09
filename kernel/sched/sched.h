@@ -1807,6 +1807,8 @@ extern void update_rq_clock(struct rq *rq);
 #define RQCF_ACT_SKIP		0x02
 #define RQCF_UPDATED		0x04
 
+#define RQCF_NOP_MASK		(RQCF_ACT_SKIP | RQCF_UPDATED)
+
 static inline void assert_clock_updated(struct rq *rq)
 {
 	/*

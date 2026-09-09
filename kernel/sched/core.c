@@ -869,11 +869,14 @@ static void update_rq_clock_task(struct rq *rq, s64 delta)
 
 static void __update_rq_clock(struct rq *rq)
 {
+	bool update;
+
 	lockdep_assert_rq_held(rq);
 
+	update = !(rq->clock_update_flags & RQCF_NOP_MASK);
 	rq->clock_update_flags |= RQCF_UPDATED;
 
-	if (!(rq->clock_update_flags & RQCF_ACT_SKIP)) {
+	if (update) {
 		u64 clock = sched_clock_cpu(cpu_of(rq));
 		s64 delta;
 
@@ -890,7 +893,7 @@ static void __update_rq_clock(struct rq *rq)
 void update_rq_clock(struct rq *rq)
 {
 	if (sched_feat(WARN_DOUBLE_CLOCK))
-		WARN_ON_ONCE(rq->clock_update_flags & RQCF_UPDATED);
+		WARN_ON_ONCE((rq->clock_update_flags & RQCF_NOP_MASK) == RQCF_UPDATED);
 
 	__update_rq_clock(rq);
 }
