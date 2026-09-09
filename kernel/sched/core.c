@@ -867,29 +867,32 @@ static void update_rq_clock_task(struct rq *rq, s64 delta)
 	update_rq_clock_pelt(rq, delta);
 }
 
-void update_rq_clock(struct rq *rq)
+static void __update_rq_clock(struct rq *rq)
 {
-	s64 delta;
-	u64 clock;
-
 	lockdep_assert_rq_held(rq);
 
-	if (rq->clock_update_flags & RQCF_ACT_SKIP)
-		return;
-
-	if (sched_feat(WARN_DOUBLE_CLOCK))
-		WARN_ON_ONCE(rq->clock_update_flags & RQCF_UPDATED);
 	rq->clock_update_flags |= RQCF_UPDATED;
 
-	clock = sched_clock_cpu(cpu_of(rq));
-	scx_rq_clock_update(rq, clock);
+	if (!(rq->clock_update_flags & RQCF_ACT_SKIP)) {
+		u64 clock = sched_clock_cpu(cpu_of(rq));
+		s64 delta;
 
-	delta = clock - rq->clock;
-	if (delta < 0)
-		return;
-	rq->clock += delta;
+		scx_rq_clock_update(rq, clock);
 
-	update_rq_clock_task(rq, delta);
+		delta = clock - rq->clock;
+		if (delta > 0) {
+			rq->clock += delta;
+			update_rq_clock_task(rq, delta);
+		}
+	}
+}
+
+void update_rq_clock(struct rq *rq)
+{
+	if (sched_feat(WARN_DOUBLE_CLOCK))
+		WARN_ON_ONCE(rq->clock_update_flags & RQCF_UPDATED);
+
+	__update_rq_clock(rq);
 }
 
 #ifdef CONFIG_SCHED_HRTICK
