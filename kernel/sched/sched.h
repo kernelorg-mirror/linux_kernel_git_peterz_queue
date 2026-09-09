@@ -1936,6 +1936,51 @@ static inline void assert_balance_callbacks_empty(struct rq *rq)
 }
 
 /*
+ * We want clocks to be updated _once_ during core scheduling.
+ *
+ * rq_lock(smt0)
+ *   __rq_clock_clear(); // outer
+ *
+ * core->core_pick_in_flight++;
+ * update_rq_clock(smt0);
+ * drop()
+ *   freeze();
+ *
+ *			rq_lock(smt1)
+ *			  __rq_clock_clear(); // inner
+ *
+ *			update_rq_clock(smt1)
+ *
+ *			rq_unlock(smt1)
+ *
+ * relock()
+ *   thaw();
+ * update_rq_clock(smt1) // no second update
+ * core_pick_in_flight--;
+ *
+ * rq_unlock()
+ */
+static inline void __rq_clock_clear(struct rq *rq)
+{
+	if (!sched_core_enabled(rq)) {
+		rq->clock_update_flags &= ~RQCF_UPDATED;
+		return;
+	}
+
+#ifdef CONFIG_SCHED_CORE
+	/*
+	 * Inner rq_{,un}lock() should preserve state.
+	 */
+	if (!rq->core->core_pick_in_flight) {
+		int cpu;
+
+		for_each_cpu(cpu, cpu_smt_mask(cpu_of(rq)))
+			cpu_rq(cpu)->clock_update_flags &= ~RQCF_UPDATED;
+	}
+#endif
+}
+
+/*
  * Lockdep annotation that avoids accidental unlocks; it's like a
  * sticky/continuous lockdep_assert_held().
  *
@@ -1949,33 +1994,29 @@ static inline void rq_pin_lock(struct rq *rq, struct rq_flags *rf)
 {
 	rf->cookie = lockdep_pin_lock(__rq_lockp(rq));
 
-	rq->clock_update_flags &= ~RQCF_UPDATED;
+	__rq_clock_clear(rq);
 	rf->clock_update_flags = 0;
 	assert_balance_callbacks_empty(rq);
 }
 
 static inline void rq_unpin_lock(struct rq *rq, struct rq_flags *rf)
 {
-	if (rq->clock_update_flags & RQCF_UPDATED)
-		rf->clock_update_flags = RQCF_UPDATED;
-
+	/* __rq_clock_clear(rq); */
 	scx_rq_clock_invalidate(rq);
 	lockdep_unpin_lock(__rq_lockp(rq), rf->cookie);
 }
 
 static inline void rq_drop_lock(struct rq *rq, struct rq_flags *rf)
 {
-	rq_unpin_lock(rq, rf);
+	rf->clock_update_flags = rq_clock_freeze(rq);
+	scx_rq_clock_invalidate(rq);
+	lockdep_unpin_lock(__rq_lockp(rq), rf->cookie);
 }
 
 static inline void rq_repin_lock(struct rq *rq, struct rq_flags *rf)
 {
 	lockdep_repin_lock(__rq_lockp(rq), rf->cookie);
-
-	/*
-	 * Restore the value we stashed in @rf for this pin context.
-	 */
-	rq->clock_update_flags |= rf->clock_update_flags;
+	rq_clock_thaw(rq, rf->clock_update_flags);
 }
 
 #define __task_rq_lock(...) __acquire_ret(___task_rq_lock(__VA_ARGS__), __rq_lockp(__ret))
