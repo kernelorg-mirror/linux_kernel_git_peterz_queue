@@ -2435,11 +2435,15 @@ static int __annotate_late(struct objtool_file *file, int type, struct instructi
 		break;
 
 	case ANNOTYPE_INSTR_BEGIN:
-		insn->instr++;
+		insn->instr += 2;
 		break;
 
 	case ANNOTYPE_INSTR_END:
-		insn->instr--;
+		insn->instr -= 2;
+		break;
+
+	case ANNOTYPE_INSTR_WEAK:
+		insn->instr += 1;
 		break;
 
 	case ANNOTYPE_UNRET_BEGIN:
@@ -3535,6 +3539,11 @@ static int validate_sibling_call(struct objtool_file *file,
 				 struct instruction *insn,
 				 struct insn_state *state)
 {
+	if (state->noinstr && state->instr > 1) {
+		WARN_INSN(insn, "sibling call with instrumentation enabled");
+		return 1;
+	}
+
 	if (insn_func(insn) && has_modified_stack_frame(insn, state)) {
 		WARN_INSN(insn, "sibling call from callable instruction with modified stack frame");
 		return 1;
@@ -3545,7 +3554,7 @@ static int validate_sibling_call(struct objtool_file *file,
 
 static int validate_return(struct symbol *func, struct instruction *insn, struct insn_state *state)
 {
-	if (state->noinstr && state->instr > 0) {
+	if (state->noinstr && state->instr > 1) {
 		WARN_INSN(insn, "return with instrumentation enabled");
 		return 1;
 	}
@@ -3646,8 +3655,6 @@ static bool skip_alt_group(struct instruction *insn)
 
 static int validate_branch(struct objtool_file *file, struct symbol *func,
 			   struct instruction *insn, struct insn_state state);
-static int do_validate_branch(struct objtool_file *file, struct symbol *func,
-			      struct instruction *insn, struct insn_state *state);
 
 static int validate_insn(struct objtool_file *file, struct symbol *func,
 			 struct instruction *insn, struct insn_state *statep,

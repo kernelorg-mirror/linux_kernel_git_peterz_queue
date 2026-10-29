@@ -71,6 +71,7 @@
  */
 #define ANNOTATE_INSTR_BEGIN(label)	ASM_ANNOTATE_LABEL(label, ANNOTYPE_INSTR_BEGIN)
 #define ANNOTATE_INSTR_END(label)	ASM_ANNOTATE_LABEL(label, ANNOTYPE_INSTR_END)
+#define ANNOTATE_INSTR_WEAK(label)	ASM_ANNOTATE_LABEL(label, ANNOTYPE_INSTR_WEAK)
 /*
  * objtool annotation to ignore the alternatives and only consider the original
  * instruction(s).

@@ -52,9 +52,26 @@
 		     : : "i" (c));					\
 })
 #define instrumentation_end() __instrumentation_end(__COUNTER__)
+
+/*
+ * A very much weaker variant of instrumentation_begin(). It does not nest and
+ * it does not pair with instrumentation_end().
+ *
+ * Its purpose is to allow calling instrumented code while preserving
+ * tail-call optimization, something which is otherwise impossible with the
+ * need to call instrumentation_end().
+ */
+#define __instrumentation_weak(c) ({					\
+	asm volatile(__stringify(c) ": nop\n\t"				\
+		     ANNOTATE_INSTR_WEAK(__ASM_BREF(c))		\
+		     : : "i" (c));					\
+})
+#define instrumentation_weak() __instrumentation_weak(__COUNTER__)
+
 #else /* !CONFIG_NOINSTR_VALIDATION */
 # define instrumentation_begin()	do { } while(0)
 # define instrumentation_end()		do { } while(0)
+# define instrumentation_weak()		do { } while(0)
 #endif /* CONFIG_NOINSTR_VALIDATION */
 
 #endif /* __LINUX_INSTRUMENTATION_H */
