@@ -28,7 +28,6 @@
  * rax uncopied bytes or 0 if successful.
  */
 SYM_FUNC_START(copy_to_nontemporal)
-	ANNOTATE_NOENDBR
 	/* If destination is not 7-byte aligned, we'll have to align it */
 	testb $7,%dil
 	jne .Lalign

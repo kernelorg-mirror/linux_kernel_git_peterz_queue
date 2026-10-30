@@ -196,7 +196,7 @@ SYM_CODE_START(entry_SYSCALL_compat)
 	movq	PER_CPU_VAR(cpu_current_top_of_stack), %rsp
 
 SYM_INNER_LABEL(entry_SYSCALL_compat_safe_stack, SYM_L_GLOBAL)
-	ANNOTATE_NOENDBR
+	ANNOTATE_NOENDBR // ip_within_syscall_gap
 
 	/* Construct struct pt_regs on stack */
 	pushq	$__USER_DS		/* pt_regs->ss */
@@ -260,7 +260,7 @@ sysret32_from_system_call:
          */
 	movq	RSP-ORIG_RAX(%rsp), %rsp
 SYM_INNER_LABEL(entry_SYSRETL_compat_unsafe_stack, SYM_L_GLOBAL)
-	ANNOTATE_NOENDBR
+	ANNOTATE_NOENDBR // ip_within_syscall_gap
 
 	/*
 	 * The original userspace %rsp (RSP-ORIG_RAX(%rsp)) is stored
@@ -280,7 +280,7 @@ SYM_INNER_LABEL(entry_SYSRETL_compat_unsafe_stack, SYM_L_GLOBAL)
 	CLEAR_CPU_BUFFERS
 	sysretl
 SYM_INNER_LABEL(entry_SYSRETL_compat_end, SYM_L_GLOBAL)
-	ANNOTATE_NOENDBR
+	ANNOTATE_NOENDBR // ip_within_syscall_gap
 	int3
 SYM_CODE_END(entry_SYSCALL_compat)
 

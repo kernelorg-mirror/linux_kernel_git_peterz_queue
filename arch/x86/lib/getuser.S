@@ -58,7 +58,6 @@
 
 	.text
 SYM_FUNC_START(__get_user_1)
-	ANNOTATE_NOENDBR
 	check_range size=1
 	ASM_STAC
 	UACCESS movzbl (%_ASM_AX),%edx
@@ -69,7 +68,6 @@ SYM_FUNC_END(__get_user_1)
 EXPORT_SYMBOL(__get_user_1)
 
 SYM_FUNC_START(__get_user_2)
-	ANNOTATE_NOENDBR
 	check_range size=2
 	ASM_STAC
 	UACCESS movzwl (%_ASM_AX),%edx
@@ -80,7 +78,6 @@ SYM_FUNC_END(__get_user_2)
 EXPORT_SYMBOL(__get_user_2)
 
 SYM_FUNC_START(__get_user_4)
-	ANNOTATE_NOENDBR
 	check_range size=4
 	ASM_STAC
 	UACCESS movl (%_ASM_AX),%edx
@@ -91,7 +88,6 @@ SYM_FUNC_END(__get_user_4)
 EXPORT_SYMBOL(__get_user_4)
 
 SYM_FUNC_START(__get_user_8)
-	ANNOTATE_NOENDBR
 #ifndef CONFIG_X86_64
 	xor %ecx,%ecx
 #endif

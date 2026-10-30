@@ -10,8 +10,6 @@
  * %rdi: w
  */
 SYM_FUNC_START(__sw_hweight32)
-	ANNOTATE_NOENDBR
-
 #ifdef CONFIG_X86_64
 	movl %edi, %eax				# w
 #endif
@@ -44,7 +42,6 @@ EXPORT_SYMBOL(__sw_hweight32)
  */
 #ifdef CONFIG_X86_64
 SYM_FUNC_START(__sw_hweight64)
-	ANNOTATE_NOENDBR
 	pushq   %rdi
 	pushq   %rdx
 

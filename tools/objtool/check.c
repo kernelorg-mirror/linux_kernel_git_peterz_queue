@@ -4597,7 +4597,7 @@ static int validate_ibt_insn(struct objtool_file *file, struct instruction *insn
 }
 
 static int validate_ibt_data_reloc(struct objtool_file *file,
-				   struct reloc *reloc)
+				   struct reloc *reloc, bool warn)
 {
 	struct instruction *dest;
 
@@ -4611,7 +4611,7 @@ static int validate_ibt_data_reloc(struct objtool_file *file,
 		return 0;
 	}
 
-	if (dest->noendbr)
+	if (dest->noendbr || !warn)
 		return 0;
 
 	WARN_FUNC(reloc->sec->base, reloc_offset(reloc),
@@ -4636,6 +4636,7 @@ static int validate_ibt(struct objtool_file *file)
 		warnings += validate_ibt_insn(file, insn);
 
 	for_each_sec(file->elf, sec) {
+		bool warn = true;
 
 		/* Already done by validate_ibt_insn() */
 		if (is_text_sec(sec))
@@ -4672,6 +4673,14 @@ static int validate_ibt(struct objtool_file *file)
 		    !strcmp(sec->name, "__patchable_function_entries"))
 			continue;
 
+		/*
+		 * EXPORT_SYMBOL() must be counted towards an ENDBR usage,
+		 * such symbols must not be implicitly sealed. But it is fine
+		 * to EXPORT an explicitly (__noendbr) sealed function.
+		 */
+		if (!strcmp(sec->name, ".export_symbol"))
+			warn = false;
+
 		for_each_reloc(sec->rsec, reloc) {
 			struct symbol *sym = find_symbol_containing(reloc->sec->base,
 								    reloc_offset(reloc));
@@ -4679,7 +4688,7 @@ static int validate_ibt(struct objtool_file *file)
 			if (sym && !strcmp(sym->name, "sys_call_table"))
 				continue;
 
-			warnings += validate_ibt_data_reloc(file, reloc);
+			warnings += validate_ibt_data_reloc(file, reloc, warn);
 		}
 	}
 

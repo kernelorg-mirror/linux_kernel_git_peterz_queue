@@ -46,7 +46,6 @@
 
 .text
 SYM_FUNC_START(__put_user_1)
-	ANNOTATE_NOENDBR
 	check_range size=1
 	ASM_STAC
 1:	movb %al,(%_ASM_CX)
@@ -57,7 +56,6 @@ SYM_FUNC_END(__put_user_1)
 EXPORT_SYMBOL(__put_user_1)
 
 SYM_FUNC_START(__put_user_2)
-	ANNOTATE_NOENDBR
 	check_range size=2
 	ASM_STAC
 2:	movw %ax,(%_ASM_CX)
@@ -68,7 +66,6 @@ SYM_FUNC_END(__put_user_2)
 EXPORT_SYMBOL(__put_user_2)
 
 SYM_FUNC_START(__put_user_4)
-	ANNOTATE_NOENDBR
 	check_range size=4
 	ASM_STAC
 3:	movl %eax,(%_ASM_CX)
@@ -79,7 +76,6 @@ SYM_FUNC_END(__put_user_4)
 EXPORT_SYMBOL(__put_user_4)
 
 SYM_FUNC_START(__put_user_8)
-	ANNOTATE_NOENDBR
 	check_range size=8
 	ASM_STAC
 4:	mov %_ASM_AX,(%_ASM_CX)

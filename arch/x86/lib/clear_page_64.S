@@ -42,7 +42,6 @@ EXPORT_SYMBOL_GPL(__clear_pages_unrolled)
  * rcx: uncleared bytes or 0 if successful.
  */
 SYM_FUNC_START(rep_stos_alternative)
-	ANNOTATE_NOENDBR
 	cmpq $64,%rcx
 	jae .Lunrolled
 
